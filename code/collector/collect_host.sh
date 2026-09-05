@@ -1,4 +1,3 @@
-cat <<'EOF' > ~/aiops-openstack/collector/collect_host.sh
 #!/bin/bash
 
 set -euo pipefail
@@ -101,4 +100,3 @@ sudo journalctl -p err -n 50 --no-pager
 REMOTE
 
 echo "Collected: $OUTPUT"
-EOF

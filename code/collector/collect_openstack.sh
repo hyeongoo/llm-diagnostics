@@ -1,4 +1,3 @@
-cat <<'EOF' > ~/aiops-openstack/collector/collect_openstack.sh
 #!/bin/bash
 
 set -euo pipefail
@@ -41,4 +40,3 @@ mkdir -p "$LOG_DIR"
 } > "$OUTPUT" 2>&1
 
 echo "Collected: $OUTPUT"
-EOF

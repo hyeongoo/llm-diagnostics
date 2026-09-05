@@ -1,4 +1,3 @@
-cat <<'EOF' > ~/aiops-openstack/collector/collect_all.sh
 #!/bin/bash
 
 set -euo pipefail
@@ -79,4 +78,3 @@ fi
 } > "$BUNDLE_LOG"
 
 echo "Diagnostic bundle: $BUNDLE_LOG"
-EOF
