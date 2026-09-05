@@ -1,0 +1,8 @@
+{
+    "services": {
+        "nginx": "active"
+    },
+    "system": {
+        "max_failed_services": 0
+    }
+}
