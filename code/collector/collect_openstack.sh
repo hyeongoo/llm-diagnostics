@@ -1,9 +1,14 @@
+cat <<'EOF' > ~/aiops-openstack/collector/collect_openstack.sh
 #!/bin/bash
+
+set -euo pipefail
 
 BASE_DIR="$HOME/aiops-openstack"
 LOG_DIR="$BASE_DIR/logs"
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 OUTPUT="$LOG_DIR/openstack_${TIMESTAMP}.log"
+
+mkdir -p "$LOG_DIR"
 
 {
     echo "===== TIMESTAMP ====="
@@ -36,3 +41,4 @@ OUTPUT="$LOG_DIR/openstack_${TIMESTAMP}.log"
 } > "$OUTPUT" 2>&1
 
 echo "Collected: $OUTPUT"
+EOF
