@@ -24,7 +24,6 @@ latest_anomaly = max(anomaly_files, key=os.path.getmtime)
 with open(latest_anomaly, "r", encoding="utf-8") as f:
     anomaly_result = json.load(f)
 
-# 이상이 없으면 AI 분석하지 않음
 if anomaly_result.get("status") != "ANOMALY":
     print("No anomaly detected. AI analysis skipped.")
     exit(0)
@@ -42,7 +41,7 @@ with open(latest_log, "r", encoding="utf-8") as f:
 findings = anomaly_result.get("findings", [])
 
 
-# 규칙 기반 이상 탐지 결과를 사람이 읽을 수 있는 형태로 변환
+# Rule 기반 결과를 화면 출력용 형태로 변환
 def format_finding(finding):
     finding_type = finding.get("type")
 
@@ -69,11 +68,42 @@ def format_finding(finding):
 
 finding_lines = [format_finding(finding) for finding in findings]
 
-if not finding_lines:
-    finding_lines = ["- 규칙 기반 탐지 결과의 상세 정보 확인 필요"]
+
+# LLM이 분석할 대상을 Rule 결과에서 생성
+analysis_targets = []
+target_number = 1
+
+for finding in findings:
+    finding_type = finding.get("type")
+
+    if finding_type == "service_state_mismatch":
+        analysis_targets.append({
+            "finding_id": f"F{target_number}",
+            "type": "service_state_mismatch",
+            "subject": finding.get("service"),
+            "confirmed_fact": (
+                f"expected={finding.get('expected')}, "
+                f"actual={finding.get('actual')}"
+            )
+        })
+        target_number += 1
+
+    elif finding_type == "failed_services_exceeded":
+        for service in finding.get("services", []):
+            analysis_targets.append({
+                "finding_id": f"F{target_number}",
+                "type": "failed_service",
+                "subject": service,
+                "confirmed_fact": "systemctl --failed에 포함됨"
+            })
+            target_number += 1
 
 
-# 상태 요약과 이상 징후는 Python이 확정
+if not analysis_targets:
+    print("No analysis target found.")
+    exit(1)
+
+
 rule_analysis = (
     "## 1. 상태 요약\n"
     "- 규칙 기반 이상 상태가 탐지됨\n"
@@ -82,60 +112,65 @@ rule_analysis = (
     + "\n".join(finding_lines)
 )
 
-anomaly_summary = json.dumps(
-    {
-        "status": anomaly_result.get("status"),
-        "findings": findings
-    },
+targets_json = json.dumps(
+    analysis_targets,
     ensure_ascii=False,
     indent=2
 )
 
-prompt = f"""
-다음은 OpenStack 및 Linux VM에서 수집한 진단 데이터와
-규칙 기반 이상 탐지 결과입니다.
 
-규칙 기반 이상 탐지 결과에 포함된 이상 상태는 이미 확정된 사실입니다.
-이상 여부나 전체 시스템의 정상/비정상 상태를 다시 판단하지 마세요.
+prompt = f"""
+다음은 규칙 기반으로 이미 확인된 이상 항목과
+OpenStack 및 Linux VM의 진단 데이터입니다.
+
+분석 대상은 아래 analysis_targets에 정의된 항목으로 제한됩니다.
+analysis_targets에 없는 새로운 이상 항목을 생성하지 마세요.
+
+진단 데이터에 포함된 다른 오류나 로그는
+정의된 분석 대상의 원인을 분석하기 위한 근거로만 사용할 수 있습니다.
+
+confirmed_fact는 이미 확인된 사실입니다.
+해당 상태 자체를 다시 확인하도록 제안하지 마세요.
 
 반드시 제공된 데이터만 근거로 분석하세요.
-진단 데이터에 없는 상태나 수치를 임의로 만들어내지 마세요.
-확실하지 않은 내용은 "확인 필요"라고 표시하세요.
-응답은 한국어로 작성하고 "None"을 사용하지 마세요.
+근거가 부족하면 "확인 필요"라고 작성하세요.
+가능성을 사실처럼 단정하지 마세요.
 
-분석 원칙:
-- 탐지된 이상 상태와 그 원인을 구분하세요.
-- 이상 상태가 확인되었다는 이유만으로 원인이 확인되었다고 판단하지 마세요.
-- 서로 다른 이상 항목 사이의 관계가 데이터로 확인되지 않았다면 서로 관련 있다고 추론하지 마세요.
-- 이미 규칙 기반으로 확인된 상태를 단순히 다시 확인하라고 제안하지 마세요.
-- 원인을 판단하기 위해 필요한 로그, 서비스 상세 상태, 설정 등의 추가 확인을 우선 제안하세요.
-- 근거가 충분하지 않은 상태에서 서비스 재시작, 시스템 재부팅, 설정 변경을 권장하지 마세요.
-- 재시작이나 설정 변경이 필요한지는 추가 확인 결과를 바탕으로 결정하도록 작성하세요.
-- 규칙 기반 탐지 결과에 actual 값이 존재하는 경우 해당 상태 자체는 이미 확인된 사실이므로 다시 확인하도록 제안하지 마세요.
-- 추가 확인 항목은 "현재 상태 확인"이 아니라 "해당 상태가 발생한 원인 확인"을 목적으로 작성하세요.
-- 서비스 이상인 경우 서비스 상세 정보, 해당 서비스의 journal 로그, 설정 또는 의존성 등 원인 분석에 필요한 정보를 우선 확인하세요.
+원인이 확인되지 않은 상태에서 서비스 재시작,
+시스템 재부팅 또는 설정 변경을 권장하지 마세요.
 
-반드시 아래 3개 항목만 출력하세요.
-상태 요약이나 이상 징후를 다시 출력하지 마세요.
+각 분석 대상에 대해 다음 세 가지를 작성하세요.
 
-## 3. 원인 후보
-- 각 이상 항목별로 가능한 원인과 현재 데이터에서 확인되는 근거를 작성
-- 현재 데이터만으로 원인을 특정할 수 없다면 "확인 필요"라고 명시
-- 가능성을 사실처럼 단정하지 말 것
+cause_candidates:
+- 가능한 원인과 근거
+- 원인을 특정할 수 없다면 확인 필요라고 작성
 
-## 4. 추가 확인 항목
-- 이미 확인된 actual 상태를 다시 확인하지 말 것
-- 해당 이상이 발생한 원인을 좁히기 위해 필요한 항목만 작성
-- 서비스 이상이라면 서비스 상세 상태, 해당 서비스의 journal 로그, 설정 및 의존성 등 원인 분석에 필요한 정보를 작성
+checks:
+- confirmed_fact 자체를 다시 확인하지 말 것
+- 이상 상태가 발생한 원인을 좁히기 위한 로그,
+  상세 정보, 설정, 의존성 등의 확인 항목 작성
 
-## 5. 권장 조치
-- 원인이 아직 확인되지 않았다면 즉시 복구 작업을 제안하지 말고 원인 분석을 우선하도록 작성
-- 추가 확인 결과로 원인이 확인된 경우에만 재시작, 설정 변경 등의 복구 조치를 제안
-- 현재 데이터만으로 근거가 없는 재시작, 재부팅, 설정 변경은 제안하지 말 것
+actions:
+- 현재 데이터만으로 안전하게 제안 가능한 조치 작성
+- 원인이 불확실하면 원인 확인 후 조치를 결정하도록 작성
+- 근거 없는 재시작, 재부팅, 설정 변경을 제안하지 말 것
 
-규칙 기반 이상 탐지 결과:
+반드시 다음 JSON 형식으로만 응답하세요.
 
-{anomaly_summary}
+{{
+  "analyses": [
+    {{
+      "finding_id": "F1",
+      "cause_candidates": ["내용"],
+      "checks": ["내용"],
+      "actions": ["내용"]
+    }}
+  ]
+}}
+
+analysis_targets:
+
+{targets_json}
 
 진단 데이터:
 
@@ -147,6 +182,7 @@ payload = {
     "prompt": prompt,
     "stream": False,
     "think": False,
+    "format": "json",
     "options": {
         "temperature": 0,
         "seed": 42
@@ -164,9 +200,85 @@ request = urllib.request.Request(
 with urllib.request.urlopen(request, timeout=300) as response:
     result = json.loads(response.read().decode("utf-8"))
 
-llm_analysis = result["response"].strip()
+raw_analysis = result["response"]
 
-# Rule 기반 결과 + LLM 분석 결과 결합
+try:
+    structured_analysis = json.loads(raw_analysis)
+except json.JSONDecodeError:
+    print("Invalid structured response from LLM.")
+    exit(1)
+
+
+# Rule Engine이 만든 finding_id만 허용
+allowed_ids = {
+    target["finding_id"]
+    for target in analysis_targets
+}
+
+llm_results = {}
+
+for item in structured_analysis.get("analyses", []):
+    finding_id = item.get("finding_id")
+
+    if finding_id not in allowed_ids:
+        continue
+
+    if finding_id in llm_results:
+        continue
+
+    llm_results[finding_id] = item
+
+
+def get_list(item, key):
+    value = item.get(key, [])
+
+    if not isinstance(value, list):
+        return ["확인 필요"]
+
+    values = [
+        str(v).strip()
+        for v in value
+        if str(v).strip()
+    ]
+
+    return values if values else ["확인 필요"]
+
+
+cause_lines = []
+check_lines = []
+action_lines = []
+
+for target in analysis_targets:
+    finding_id = target["finding_id"]
+    subject = target["subject"]
+
+    item = llm_results.get(finding_id, {})
+
+    causes = get_list(item, "cause_candidates")
+    checks = get_list(item, "checks")
+    actions = get_list(item, "actions")
+
+    cause_lines.append(f"- [{subject}]")
+    cause_lines.extend(f"  - {value}" for value in causes)
+
+    check_lines.append(f"- [{subject}]")
+    check_lines.extend(f"  - {value}" for value in checks)
+
+    action_lines.append(f"- [{subject}]")
+    action_lines.extend(f"  - {value}" for value in actions)
+
+
+llm_analysis = (
+    "## 3. 원인 후보\n"
+    + "\n".join(cause_lines)
+    + "\n\n"
+    "## 4. 추가 확인 항목\n"
+    + "\n".join(check_lines)
+    + "\n\n"
+    "## 5. 권장 조치\n"
+    + "\n".join(action_lines)
+)
+
 analysis = f"{rule_analysis}\n\n{llm_analysis}\n"
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
