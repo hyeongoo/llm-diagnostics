@@ -171,6 +171,41 @@ for target in analysis_targets:
         ensure_ascii=False,
         indent=2
     )
+    
+    response_schema = {
+        "type": "object",
+        "properties": {
+            "finding_id": {
+                "type": "string",
+                "enum": [finding_id]
+            },
+            "cause_candidates": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            },
+            "checks": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            },
+            "actions": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            }
+        },
+        "required": [
+            "finding_id",
+            "cause_candidates",
+            "checks",
+            "actions"
+        ],
+        "additionalProperties": False
+    }
 
     prompt = f"""
 다음 하나의 이상 항목만 분석하세요.
@@ -203,14 +238,8 @@ checks에서는 현재 상태가 active/inactive/failed인지 다시 확인하�
 원인이 확인되지 않은 경우 서비스 재시작,
 시스템 재부팅 또는 설정 변경을 바로 권장하지 마세요.
 
-다음 JSON 형식으로만 응답하세요.
-
-{{
-  "finding_id": "{finding_id}",
-  "cause_candidates": ["내용"],
-  "checks": ["내용"],
-  "actions": ["내용"]
-}}
+응답은 지정된 JSON Schema에 맞춰 작성하세요.
+각 필드에는 실제 분석 결과를 작성하고 예시나 placeholder 문구를 출력하지 마세요.
 
 관련 근거:
 
@@ -222,7 +251,7 @@ checks에서는 현재 상태가 active/inactive/failed인지 다시 확인하�
         "prompt": prompt,
         "stream": False,
         "think": False,
-        "format": "json",
+        "format": response_schema,
         "options": {
             "temperature": 0,
             "seed": 42
