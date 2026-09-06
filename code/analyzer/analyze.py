@@ -28,8 +28,7 @@ OLLAMA_URL = "http://192.168.214.1:11434/api/generate"
 MODEL = "qwen3:1.7b"
 
 
-# LLM과 Python이 공통으로 사용하는
-# 진단 데이터 소스 식별자
+# LLM과 Python이 공통으로 사용하는 진단 데이터 소스
 DATA_SOURCE_CATALOG = [
     "service_state",
     "systemctl_show",
@@ -45,6 +44,13 @@ DATA_SOURCE_CATALOG = [
 ]
 
 
+# 근거에는 Rule Engine 결과도 사용할 수 있음
+EVIDENCE_SOURCE_CATALOG = [
+    "rule_finding",
+    *DATA_SOURCE_CATALOG
+]
+
+
 # 현재 상세 수집 단계에서 이미 확보되는 데이터
 COLLECTED_DATA_SOURCES = {
     "service_state",
@@ -55,6 +61,7 @@ COLLECTED_DATA_SOURCES = {
 
 
 DATA_SOURCE_LABELS = {
+    "rule_finding": "Rule Engine 탐지 결과",
     "service_state": "서비스 상태",
     "systemctl_show": "systemctl show",
     "systemctl_status": "systemctl status",
@@ -80,7 +87,25 @@ REMEDIATION_ACTION_LABELS = {
 }
 
 
-# 모니터링 대상 읽기
+# 복구와 원인 교정을 구분
+REMEDIATION_ACTION_CATEGORIES = {
+    "start_service": "recovery",
+    "restart_service": "recovery",
+    "reload_service": "recovery",
+    "failover_service": "recovery",
+    "change_configuration": "corrective",
+    "rollback_configuration": "corrective",
+    "other": "other"
+}
+
+
+REMEDIATION_CATEGORY_LABELS = {
+    "recovery": "서비스 복구",
+    "corrective": "원인 교정",
+    "other": "기타"
+}
+
+
 def load_targets():
     if not os.path.exists(TARGETS_FILE):
         print(
@@ -116,7 +141,6 @@ def load_targets():
     return targets
 
 
-# Finding의 대상 Host 결정
 def resolve_target(
     finding,
     configured_targets
@@ -139,7 +163,6 @@ def resolve_target(
 
         return finding_target
 
-    # 현재 단일 Host 환경과의 호환
     if len(configured_targets) == 1:
         return configured_targets[0]
 
@@ -153,23 +176,36 @@ def resolve_target(
     sys.exit(1)
 
 
-# Rule 결과 화면 출력
-def format_finding(finding, configured_targets):
-    finding_type = finding.get("type")
+def format_finding(
+    finding,
+    configured_targets
+):
+    finding_type = finding.get(
+        "type"
+    )
+
     target = resolve_target(
         finding,
         configured_targets
     )
 
-    if finding_type == "service_state_mismatch":
+    if (
+        finding_type
+        == "service_state_mismatch"
+    ):
         return (
             f"- [{target}] "
             f"{finding.get('service')}: "
-            f"expected={finding.get('expected')}, "
-            f"actual={finding.get('actual')}"
+            f"expected="
+            f"{finding.get('expected')}, "
+            f"actual="
+            f"{finding.get('actual')}"
         )
 
-    if finding_type == "failed_services_exceeded":
+    if (
+        finding_type
+        == "failed_services_exceeded"
+    ):
         services = finding.get(
             "services",
             []
@@ -184,8 +220,10 @@ def format_finding(finding, configured_targets):
         return (
             f"- [{target}] "
             f"Failed Services: "
-            f"expected_max={finding.get('expected_max')}, "
-            f"actual={finding.get('actual')} "
+            f"expected_max="
+            f"{finding.get('expected_max')}, "
+            f"actual="
+            f"{finding.get('actual')} "
             f"({service_list})"
         )
 
@@ -194,11 +232,12 @@ def format_finding(finding, configured_targets):
         ensure_ascii=False
     )
 
-    return f"- [{target}] {finding_json}"
+    return (
+        f"- [{target}] "
+        f"{finding_json}"
+    )
 
 
-# Rule Engine 결과를
-# 개별 Service 분석 대상으로 변환
 def build_analysis_targets(
     findings,
     configured_targets
@@ -275,10 +314,7 @@ def build_analysis_targets(
                         service,
 
                     "confirmed_fact":
-                        (
-                            "systemctl --failed에 "
-                            "포함됨"
-                        ),
+                        "systemctl --failed에 포함됨",
 
                     "remediation_policy":
                         "pending"
@@ -289,7 +325,6 @@ def build_analysis_targets(
     return analysis_targets
 
 
-# 이상 Service 상세 데이터 수집
 def collect_service_detail(
     target_host,
     service
@@ -381,7 +416,6 @@ def collect_service_detail(
     return detail_path
 
 
-# systemctl show 구조화
 def parse_systemd_properties(
     detail_data
 ):
@@ -410,11 +444,9 @@ def parse_systemd_properties(
             in_properties
             and "=" in stripped
         ):
-            key, value = (
-                stripped.split(
-                    "=",
-                    1
-                )
+            key, value = stripped.split(
+                "=",
+                1
             )
 
             properties[
@@ -435,8 +467,6 @@ def parse_int(value):
         return None
 
 
-# Python이 직접 확인 가능한
-# systemd 관측 사실만 생성
 def build_interpreted_facts(
     properties,
     detail_data
@@ -479,30 +509,6 @@ def build_interpreted_facts(
         detail_data.lower()
     )
 
-    clean_deactivation_recorded = (
-        "deactivated successfully"
-        in detail_lower
-    )
-
-    current_failed_state = (
-        active_state == "failed"
-        or sub_state == "failed"
-    )
-
-    non_success_result_recorded = (
-        result not in [
-            "unknown",
-            "",
-            "success"
-        ]
-    )
-
-    non_zero_exec_status_recorded = (
-        exec_main_status
-        is not None
-        and exec_main_status != 0
-    )
-
     return {
         "current_active_state":
             active_state,
@@ -520,20 +526,35 @@ def build_interpreted_facts(
             exec_main_status,
 
         "clean_deactivation_recorded":
-            clean_deactivation_recorded,
+            (
+                "deactivated successfully"
+                in detail_lower
+            ),
 
         "current_failed_state":
-            current_failed_state,
+            (
+                active_state == "failed"
+                or sub_state == "failed"
+            ),
 
         "non_success_result_recorded":
-            non_success_result_recorded,
+            (
+                result not in [
+                    "unknown",
+                    "",
+                    "success"
+                ]
+            ),
 
         "non_zero_exec_status_recorded":
-            non_zero_exec_status_recorded
+            (
+                exec_main_status
+                is not None
+                and exec_main_status != 0
+            )
     }
 
 
-# 현재 이미 수집된 데이터 정보
 def build_collected_data_info():
     return {
         "sources": sorted(
@@ -542,7 +563,6 @@ def build_collected_data_info():
     }
 
 
-# Ollama Structured Output Schema
 def build_response_schema(
     finding_id,
     host,
@@ -563,7 +583,32 @@ def build_response_schema(
                 "type": "array",
 
                 "items": {
-                    "type": "string"
+                    "type": "object",
+
+                    "properties": {
+                        "evidence_id": {
+                            "type": "string"
+                        },
+
+                        "source": {
+                            "type": "string",
+                            "enum":
+                                EVIDENCE_SOURCE_CATALOG
+                        },
+
+                        "fact": {
+                            "type": "string"
+                        }
+                    },
+
+                    "required": [
+                        "evidence_id",
+                        "source",
+                        "fact"
+                    ],
+
+                    "additionalProperties":
+                        False
                 }
             },
 
@@ -574,6 +619,10 @@ def build_response_schema(
                     "type": "object",
 
                     "properties": {
+                        "cause_id": {
+                            "type": "string"
+                        },
+
                         "host": {
                             "type": "string",
                             "enum": [
@@ -590,13 +639,23 @@ def build_response_schema(
 
                         "description": {
                             "type": "string"
+                        },
+
+                        "evidence_refs": {
+                            "type": "array",
+
+                            "items": {
+                                "type": "string"
+                            }
                         }
                     },
 
                     "required": [
+                        "cause_id",
                         "host",
                         "service",
-                        "description"
+                        "description",
+                        "evidence_refs"
                     ],
 
                     "additionalProperties":
@@ -625,7 +684,7 @@ def build_response_schema(
                             ]
                         },
 
-                        "purpose": {
+                        "question": {
                             "type": "string"
                         },
 
@@ -647,21 +706,16 @@ def build_response_schema(
 
                         "scope_detail": {
                             "type": "string"
-                        },
-
-                        "method": {
-                            "type": "string"
                         }
                     },
 
                     "required": [
                         "host",
                         "service",
-                        "purpose",
+                        "question",
                         "data_source",
                         "scope",
-                        "scope_detail",
-                        "method"
+                        "scope_detail"
                     ],
 
                     "additionalProperties":
@@ -692,7 +746,6 @@ def build_response_schema(
 
                         "action": {
                             "type": "string",
-
                             "enum": list(
                                 REMEDIATION_ACTION_LABELS
                                 .keys()
@@ -703,8 +756,28 @@ def build_response_schema(
                             "type": "string"
                         },
 
-                        "basis": {
-                            "type": "string"
+                        "evidence_refs": {
+                            "type": "array",
+
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+
+                        "cause_refs": {
+                            "type": "array",
+
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+
+                        "prerequisites": {
+                            "type": "array",
+
+                            "items": {
+                                "type": "string"
+                            }
                         }
                     },
 
@@ -713,7 +786,9 @@ def build_response_schema(
                         "service",
                         "action",
                         "plan",
-                        "basis"
+                        "evidence_refs",
+                        "cause_refs",
+                        "prerequisites"
                     ],
 
                     "additionalProperties":
@@ -734,19 +809,22 @@ def build_response_schema(
     }
 
 
-# Ollama 호출
 def call_ollama(
     prompt,
     response_schema
 ):
     payload = {
-        "model": MODEL,
+        "model":
+            MODEL,
 
-        "prompt": prompt,
+        "prompt":
+            prompt,
 
-        "stream": False,
+        "stream":
+            False,
 
-        "think": False,
+        "think":
+            False,
 
         "format":
             response_schema,
@@ -782,7 +860,9 @@ def call_ollama(
 
             result = json.loads(
                 response.read()
-                .decode("utf-8")
+                .decode(
+                    "utf-8"
+                )
             )
 
     except urllib.error.HTTPError as e:
@@ -830,36 +910,6 @@ def call_ollama(
         sys.exit(1)
 
 
-def get_string_list(
-    item,
-    key
-):
-    value = item.get(
-        key,
-        []
-    )
-
-    if not isinstance(
-        value,
-        list
-    ):
-        return []
-
-    values = []
-
-    for entry in value:
-        text = str(
-            entry
-        ).strip()
-
-        if text:
-            values.append(
-                text
-            )
-
-    return values
-
-
 def normalize_text(value):
     return " ".join(
         str(value)
@@ -869,32 +919,150 @@ def normalize_text(value):
     )
 
 
-# 구조화된 원인 후보 검증
-def get_cause_candidates(
-    item,
-    expected_host,
-    expected_service
-):
-    candidates = item.get(
-        "cause_candidates",
-        []
-    )
-
+def get_string_list(value):
     if not isinstance(
-        candidates,
+        value,
         list
     ):
         return []
 
     results = []
-    seen = set()
 
-    for candidate in candidates:
+    for item in value:
+        text = str(
+            item
+        ).strip()
+
+        if text:
+            results.append(
+                text
+            )
+
+    return results
+
+
+# LLM이 선택한 근거를 구조적으로 검증
+def get_evidence(item):
+    raw_evidence = item.get(
+        "evidence",
+        []
+    )
+
+    if not isinstance(
+        raw_evidence,
+        list
+    ):
+        return [], {}
+
+    evidence = []
+    evidence_map = {}
+
+    for entry in raw_evidence:
+        if not isinstance(
+            entry,
+            dict
+        ):
+            continue
+
+        evidence_id = str(
+            entry.get(
+                "evidence_id",
+                ""
+            )
+        ).strip()
+
+        source = str(
+            entry.get(
+                "source",
+                ""
+            )
+        ).strip()
+
+        fact = str(
+            entry.get(
+                "fact",
+                ""
+            )
+        ).strip()
+
+        if (
+            not evidence_id
+            or not fact
+        ):
+            continue
+
+        if (
+            source
+            not in EVIDENCE_SOURCE_CATALOG
+        ):
+            continue
+
+        if (
+            evidence_id
+            in evidence_map
+        ):
+            continue
+
+        normalized = {
+            "evidence_id":
+                evidence_id,
+
+            "source":
+                source,
+
+            "fact":
+                fact
+        }
+
+        evidence.append(
+            normalized
+        )
+
+        evidence_map[
+            evidence_id
+        ] = normalized
+
+    return (
+        evidence,
+        evidence_map
+    )
+
+
+# 원인 후보가 실제 근거를 참조하는지 검증
+def get_cause_candidates(
+    item,
+    expected_host,
+    expected_service,
+    evidence_map
+):
+    raw_candidates = item.get(
+        "cause_candidates",
+        []
+    )
+
+    if not isinstance(
+        raw_candidates,
+        list
+    ):
+        return [], {}
+
+    candidates = []
+    cause_map = {}
+    seen_descriptions = set()
+
+    for candidate in raw_candidates:
         if not isinstance(
             candidate,
             dict
         ):
             continue
+
+        cause_id = str(
+            candidate.get(
+                "cause_id",
+                ""
+            )
+        ).strip()
 
         host = str(
             candidate.get(
@@ -917,48 +1085,89 @@ def get_cause_candidates(
             )
         ).strip()
 
-        # 현재 Finding의 Host와
-        # Service만 허용
+        evidence_refs = get_string_list(
+            candidate.get(
+                "evidence_refs",
+                []
+            )
+        )
+
+        valid_evidence_refs = [
+            ref
+            for ref in evidence_refs
+            if ref in evidence_map
+        ]
+
         if (
             host != expected_host
             or service != expected_service
         ):
             continue
 
-        if not description:
+        if (
+            not cause_id
+            or not description
+            or not valid_evidence_refs
+        ):
             continue
 
-        key = normalize_text(
-            description
-        )
-
-        if key in seen:
+        if cause_id in cause_map:
             continue
 
-        seen.add(
-            key
+        description_key = (
+            normalize_text(
+                description
+            )
         )
 
-        results.append(
-            description
+        if (
+            description_key
+            in seen_descriptions
+        ):
+            continue
+
+        seen_descriptions.add(
+            description_key
         )
 
-    return results
+        normalized = {
+            "cause_id":
+                cause_id,
+
+            "description":
+                description,
+
+            "evidence_refs":
+                valid_evidence_refs
+        }
+
+        candidates.append(
+            normalized
+        )
+
+        cause_map[
+            cause_id
+        ] = normalized
+
+    return (
+        candidates,
+        cause_map
+    )
 
 
-# 구조화된 추가 확인 항목 검증
+# 추가 확인 항목 검증
 def get_checks(
     item,
     expected_host,
     expected_service
 ):
-    checks = item.get(
+    raw_checks = item.get(
         "checks",
         []
     )
 
     if not isinstance(
-        checks,
+        raw_checks,
         list
     ):
         return []
@@ -966,7 +1175,7 @@ def get_checks(
     valid_checks = []
     seen = set()
 
-    for check in checks:
+    for check in raw_checks:
         if not isinstance(
             check,
             dict
@@ -987,9 +1196,9 @@ def get_checks(
             )
         ).strip()
 
-        purpose = str(
+        question = str(
             check.get(
-                "purpose",
+                "question",
                 ""
             )
         ).strip()
@@ -1015,14 +1224,6 @@ def get_checks(
             )
         ).strip()
 
-        method = str(
-            check.get(
-                "method",
-                ""
-            )
-        ).strip()
-
-        # 현재 분석 대상만 허용
         if (
             host != expected_host
             or service != expected_service
@@ -1030,10 +1231,9 @@ def get_checks(
             continue
 
         if (
-            not purpose
+            not question
             or not data_source
             or not scope
-            or not method
         ):
             continue
 
@@ -1043,8 +1243,8 @@ def get_checks(
         ):
             continue
 
-        # 이미 확보한 데이터를
-        # 같은 범위에서 다시 보는 것은 제거
+        # 이미 확보한 데이터를 같은 범위에서
+        # 다시 보는 확인은 제거
         if scope == "existing":
             continue
 
@@ -1053,33 +1253,30 @@ def get_checks(
             in COLLECTED_DATA_SOURCES
         )
 
-        # 이미 수집한 데이터 소스는
-        # 새로운 소스(new)가 될 수 없음
+        # 이미 수집된 Source는
+        # 새로운 Source가 될 수 없음
         if (
             source_already_collected
             and scope == "new"
         ):
             continue
 
-        # 이미 수집한 데이터 소스라면
-        # 추가 범위 조회(expanded)는 가능
+        # 기존 Source의 추가 범위는 허용
         if (
             source_already_collected
             and scope == "expanded"
+            and not scope_detail
         ):
-            if not scope_detail:
-                continue
+            continue
 
-        # 아직 수집하지 않은 데이터는
-        # expanded가 아니라 new여야 함
+        # 아직 수집되지 않은 Source는
+        # expanded가 아니라 new
         if (
             not source_already_collected
             and scope == "expanded"
         ):
             continue
 
-        # 새로운 데이터 소스라면
-        # 무엇을 추가 확인할지 설명 필요
         if (
             not source_already_collected
             and scope == "new"
@@ -1095,15 +1292,12 @@ def get_checks(
 
         key = (
             normalize_text(
-                purpose
+                question
             ),
             data_source,
             scope,
             normalize_text(
                 scope_detail
-            ),
-            normalize_text(
-                method
             )
         )
 
@@ -1115,8 +1309,8 @@ def get_checks(
         )
 
         valid_checks.append({
-            "purpose":
-                purpose,
+            "question":
+                question,
 
             "data_source":
                 data_source,
@@ -1125,29 +1319,29 @@ def get_checks(
                 scope,
 
             "scope_detail":
-                scope_detail,
-
-            "method":
-                method
+                scope_detail
         })
 
     return valid_checks
 
 
-# 복구 후보에 Policy 상태 부여
+# 복구 후보를 근거/원인과 연결한 뒤
+# Policy 상태 부여
 def evaluate_remediation_candidates(
     item,
     expected_host,
     expected_service,
-    remediation_policy
+    remediation_policy,
+    evidence_map,
+    cause_map
 ):
-    candidates = item.get(
+    raw_candidates = item.get(
         "remediation_candidates",
         []
     )
 
     if not isinstance(
-        candidates,
+        raw_candidates,
         list
     ):
         return []
@@ -1161,21 +1355,10 @@ def evaluate_remediation_candidates(
             "pending"
         )
 
-    policy_reasons = {
-        "allowed":
-            "정책의 복구 허용 조건이 충족됨",
-
-        "pending":
-            "복구 허용 조건이 아직 검증되지 않음",
-
-        "blocked":
-            "정책에 의해 복구 조치가 차단됨"
-    }
-
     evaluated = []
     seen = set()
 
-    for candidate in candidates:
+    for candidate in raw_candidates:
         if not isinstance(
             candidate,
             dict
@@ -1210,15 +1393,27 @@ def evaluate_remediation_candidates(
             )
         ).strip()
 
-        basis = str(
+        evidence_refs = get_string_list(
             candidate.get(
-                "basis",
-                ""
+                "evidence_refs",
+                []
             )
-        ).strip()
+        )
 
-        # Host와 Service를
-        # 현재 Finding에 고정
+        cause_refs = get_string_list(
+            candidate.get(
+                "cause_refs",
+                []
+            )
+        )
+
+        prerequisites = get_string_list(
+            candidate.get(
+                "prerequisites",
+                []
+            )
+        )
+
         if (
             host != expected_host
             or service != expected_service
@@ -1228,22 +1423,88 @@ def evaluate_remediation_candidates(
         if (
             action
             not in REMEDIATION_ACTION_LABELS
+            or not plan
         ):
             continue
 
+        valid_evidence_refs = [
+            ref
+            for ref in evidence_refs
+            if ref in evidence_map
+        ]
+
+        valid_cause_refs = [
+            ref
+            for ref in cause_refs
+            if ref in cause_map
+        ]
+
+        # 아무 근거와도 연결되지 않은
+        # 복구 후보는 출력하지 않음
         if (
-            not plan
-            or not basis
+            not valid_evidence_refs
+            and not valid_cause_refs
         ):
             continue
+
+        category = (
+            REMEDIATION_ACTION_CATEGORIES[
+                action
+            ]
+        )
+
+        if (
+            remediation_policy
+            == "allowed"
+        ):
+            policy_reason = (
+                "정책의 복구 허용 조건이 "
+                "충족됨"
+            )
+
+        elif (
+            remediation_policy
+            == "blocked"
+        ):
+            policy_reason = (
+                "정책에 의해 복구 조치가 "
+                "차단됨"
+            )
+
+        elif (
+            category == "corrective"
+            and not valid_cause_refs
+        ):
+            policy_reason = (
+                "원인과의 연결 및 복구 허용 "
+                "조건이 검증되지 않아 보류"
+            )
+
+        elif (
+            category == "corrective"
+        ):
+            policy_reason = (
+                "원인 교정 조치의 사전조건과 "
+                "복구 허용 조건이 아직 "
+                "검증되지 않음"
+            )
+
+        else:
+            policy_reason = (
+                "복구 허용 조건이 아직 "
+                "검증되지 않음"
+            )
 
         key = (
             action,
             normalize_text(
                 plan
             ),
-            normalize_text(
-                basis
+            tuple(
+                valid_evidence_refs
+            ),
+            tuple(
+                valid_cause_refs
             )
         )
 
@@ -1266,19 +1527,31 @@ def evaluate_remediation_candidates(
                     action
                 ],
 
+            "category":
+                category,
+
+            "category_label":
+                REMEDIATION_CATEGORY_LABELS[
+                    category
+                ],
+
             "plan":
                 plan,
 
-            "basis":
-                basis,
+            "evidence_refs":
+                valid_evidence_refs,
+
+            "cause_refs":
+                valid_cause_refs,
+
+            "prerequisites":
+                prerequisites,
 
             "status":
                 remediation_policy,
 
             "policy_reason":
-                policy_reasons[
-                    remediation_policy
-                ]
+                policy_reason
         })
 
     return evaluated
@@ -1292,12 +1565,14 @@ configured_targets = (
     load_targets()
 )
 
+
 anomaly_files = glob.glob(
     os.path.join(
         LOG_DIR,
         "anomaly_*.json"
     )
 )
+
 
 if not anomaly_files:
     print(
@@ -1311,6 +1586,7 @@ latest_anomaly = max(
     key=os.path.getmtime
 )
 
+
 with open(
     latest_anomaly,
     "r",
@@ -1322,7 +1598,9 @@ with open(
 
 
 if (
-    anomaly_result.get("status")
+    anomaly_result.get(
+        "status"
+    )
     != "ANOMALY"
 ):
     print(
@@ -1335,6 +1613,7 @@ if (
 latest_log = anomaly_result.get(
     "diagnostic_file"
 )
+
 
 if (
     not latest_log
@@ -1354,6 +1633,7 @@ findings = anomaly_result.get(
     []
 )
 
+
 finding_lines = [
     format_finding(
         finding,
@@ -1369,6 +1649,7 @@ analysis_targets = (
         configured_targets
     )
 )
+
 
 if not analysis_targets:
     print(
@@ -1392,7 +1673,6 @@ llm_results = {}
 detail_cache = {}
 
 
-# Finding별 상세 수집 + LLM 분석
 for target in analysis_targets:
     finding_id = target[
         "finding_id"
@@ -1410,6 +1690,7 @@ for target in analysis_targets:
         target_host,
         service
     )
+
 
     if (
         cache_key
@@ -1454,6 +1735,7 @@ for target in analysis_targets:
             ]["data"]
         )
 
+
     print(
         "Detail     : "
         f"{target_host} / "
@@ -1482,8 +1764,6 @@ for target in analysis_targets:
     )
 
 
-    # target / subject 같은 모호한 이름 대신
-    # Host와 Service를 명시적으로 분리
     analysis_input = {
         "finding_id":
             finding_id,
@@ -1537,20 +1817,13 @@ for target in analysis_targets:
 
 아래 하나의 이상 항목만 분석하세요.
 
-분석 대상에는 host와 service가 명확하게 구분되어 있습니다.
-
-host:
-서비스가 실행되는 서버 또는 SSH 대상입니다.
-
-service:
-현재 장애 분석 대상인 systemd 서비스입니다.
+host는 서비스가 실행되는 서버 또는 SSH 대상이고,
+service는 현재 장애 분석 대상인 systemd 서비스입니다.
 
 host를 service로 해석하면 안 됩니다.
-host에 대해 서비스 시작, 재시작, 설정 변경 등의
-복구 조치를 제안하면 안 됩니다.
 
 모든 원인 후보, 추가 확인, 복구 후보의 대상은
-반드시 현재 service여야 합니다.
+현재 service여야 합니다.
 
 분석 대상:
 
@@ -1559,132 +1832,131 @@ host에 대해 서비스 시작, 재시작, 설정 변경 등의
 confirmed_fact는 Rule Engine이 이미 확인한 현재 상태입니다.
 
 interpreted_facts는 수집된 systemd 데이터를
-Python 코드가 규칙에 따라 정리한 관측 사실입니다.
+Python 코드가 정리한 관측 사실입니다.
 
-interpreted_facts에 없는 사실을
+제공된 데이터에 없는 사실을
 임의로 추가하거나 단정하지 마세요.
 
 특정 사람, 프로세스, 자동화 도구 또는 systemd가
 서비스 중지를 요청했다는 직접적인 근거가 없다면
 종료 요청 주체를 특정하지 마세요.
 
-clean_deactivation_recorded가 true이면
-수집된 로그에 정상적인 deactivation 기록이
-존재한다는 의미입니다.
-
-이 사실만으로 누가 또는 무엇이
-중지를 요청했는지는 판단할 수 없습니다.
+clean_deactivation_recorded가 true라는 사실만으로
+누가 또는 무엇이 중지를 요청했는지는
+판단할 수 없습니다.
 
 current_failed_state,
 non_success_result_recorded,
-non_zero_exec_status_recorded가 false라는 것은
-현재 수집된 해당 필드에서 그 신호가
-확인되지 않았다는 의미입니다.
-
-이 값만으로 시스템 전체에 오류가 없었다고
-단정하지 마세요.
+non_zero_exec_status_recorded가 false라는 사실만으로
+시스템 전체에 오류가 없었다고 단정하지 마세요.
 
 
-already_collected_data.sources에 포함된 ID는
-현재 분석 입력에서 이미 확보한 데이터 소스입니다.
+[evidence]
 
-checks의 data_source는
-data_source_catalog에 존재하는 ID만 사용하세요.
+- 실제 제공된 데이터에서 직접 확인되는
+  관측 사실만 작성하세요.
 
-checks의 scope 기준:
+- 각 근거에 E1, E2, E3처럼
+  고유한 evidence_id를 부여하세요.
 
-existing
-- 이미 수집된 데이터 소스를
-  같은 범위에서 다시 확인하는 경우
+- source는 허용된 source ID만 사용하세요.
 
-expanded
-- 이미 수집된 데이터 소스를 사용하지만
-  추가 시간 범위, 추가 로그 범위 등
-  기존에 없던 범위를 조회하는 경우
-
-new
-- 아직 수집되지 않은 새로운 데이터 소스를
-  확인하는 경우
-
-already_collected_data.sources에 있는 데이터 소스를
-new로 분류하면 안 됩니다.
-
-이미 확보한 데이터를 같은 범위에서
-다시 확인하는 existing 항목은
-checks에 포함하지 마세요.
-
-expanded를 사용하는 경우에는
-scope_detail에 어떤 추가 범위를
-확인하는지 구체적으로 작성하세요.
-
-new를 사용하는 경우에는
-scope_detail에 새롭게 어떤 정보를
-확인하려는지 작성하세요.
-
-checks에는 실제 원인을 좁히기 위해
-새로운 정보를 얻을 수 있는
-read-only 조사만 작성하세요.
+- 원인 추정이나 복구 제안은
+  evidence에 작성하지 마세요.
 
 
-cause_candidates:
-- 현재 service의 장애 원인 후보만 작성하세요.
-- host를 service처럼 표현하지 마세요.
-- confirmed_fact 자체를 단순 반복하지 마세요.
-- 실제 근거를 기반으로 작성하세요.
-- 가능성을 사실처럼 단정하지 마세요.
-- 원인을 특정할 수 없다면 확인 필요라고 작성하세요.
+[cause_candidates]
+
+- 원인 후보에는 C1, C2처럼
+  고유한 cause_id를 부여하세요.
+
+- 반드시 하나 이상의 evidence_id를
+  evidence_refs로 연결하세요.
+
+- 단순히 failed/inactive 상태를
+  다시 표현하는 대신,
+  현재 근거가 설명하는 실패 메커니즘 또는
+  가능한 원인을 작성하세요.
+
+- 직접적인 근거가 부족하면
+  가능성으로 표현하세요.
+
+- 다른 Host나 다른 Service를
+  임의로 원인으로 연결하지 마세요.
 
 
-remediation_candidates:
-- 실제 시스템 상태를 변경하는 복구 후보입니다.
-- 대상 service는 현재 분석 대상 service만 가능합니다.
-- host 자체에 대한 서비스 조치를 만들지 마세요.
-- 근거가 있는 복구 후보만 작성하세요.
-- 억지로 복구 후보를 만들 필요는 없습니다.
+[checks]
 
-action은 다음 의미입니다.
+- 이미 수집한 데이터를 같은 범위에서
+  다시 보는 항목은 제외하세요.
 
-start_service:
-서비스 시작
+- question에는 실제로 무엇을 알아내려는지
+  구체적인 질문 또는 조사 목적을 작성하세요.
 
-restart_service:
-서비스 재시작
+- question에 existing, expanded, new 같은
+  scope 이름을 그대로 쓰지 마세요.
 
-reload_service:
-서비스 설정 재로드
+- data_source는 data_source_catalog의
+  ID만 사용하세요.
 
-change_configuration:
-서비스 설정 변경
+- already_collected_data.sources에 있는
+  source를 new로 분류하지 마세요.
 
-rollback_configuration:
-서비스 설정 롤백
+- expanded는 기존 Source의 시간 범위,
+  로그 범위 또는 문맥을 넓혀
+  새 정보를 얻는 경우입니다.
 
-failover_service:
-서비스 Failover
+- new는 현재 수집되지 않은
+  새로운 Source를 확인하는 경우입니다.
 
-other:
-위 범주에 없는 복구 조치
+- scope_detail에는 실제로 어떤 추가 범위나
+  새 정보를 확인할지 구체적으로 작성하세요.
 
-plan에는 실제 고려할 복구 방법을 작성하세요.
-
-basis에는 왜 해당 복구 조치를 고려할 수 있는지
-현재 제공된 근거를 작성하세요.
-
-복구 조치의 허용 여부는 LLM이 결정하지 않습니다.
-
-Python Policy가 별도로 판단하므로
-근거가 있는 복구 후보라면
-허용 여부를 추측하지 말고 반환하세요.
+- "read-only", "log_analysis", "expanded"처럼
+  추상적인 표현만 작성하지 마세요.
 
 
-evidence:
-- 실제 제공된 데이터에서 확인되는 근거만 작성하세요.
-- 존재하지 않는 로그나 사실을 만들어내지 마세요.
+[remediation_candidates]
+
+- 복구 후보는 현재 근거 및 원인 후보와
+  연결해서 제안하세요.
+
+- evidence_refs에는 실제 사용한
+  evidence_id만 넣으세요.
+
+- cause_refs에는 실제 사용한
+  cause_id만 넣으세요.
+
+- prerequisites에는 조치 전에
+  확인되어야 할 조건을 작성하세요.
+
+- start/restart/failover처럼 서비스를
+  다시 정상 상태로 만드는 조치는
+  원인 제거가 아니라
+  "서비스 복구 시도"로 표현하세요.
+
+- 근거가 없는 상태에서
+  "원인을 제거한다",
+  "문제를 해결한다"고 단정하지 마세요.
+
+- 설정 변경이나 설정 롤백은
+  설정 또는 원인과의 연결이
+  실제 근거로 뒷받침될 때만
+  후보로 제안하세요.
+
+- 복구 조치의 허용 여부는
+  LLM이 판단하지 않습니다.
+
+- Python Policy가 별도로 판단하므로
+  허용 여부를 추측하지 마세요.
+
+- 근거가 부족하다면
+  복구 후보를 억지로 만들지 마세요.
+
 
 과거 로그와 현재 상태를 구분하세요.
 
-다른 서버나 다른 서비스를
-현재 문제의 원인으로 임의로 연결하지 마세요.
+가능성을 사실처럼 단정하지 마세요.
 
 
 SERVICE_DETAIL:
@@ -1750,24 +2022,30 @@ for target in analysis_targets:
         "service"
     ]
 
-
     item = llm_results.get(
         finding_id,
         {}
     )
 
-
-    evidence = get_string_list(
-        item,
-        "evidence"
+    label = (
+        f"{target_host} / "
+        f"{service}"
     )
 
 
-    causes = (
+    evidence, evidence_map = (
+        get_evidence(
+            item
+        )
+    )
+
+
+    causes, cause_map = (
         get_cause_candidates(
             item,
             target_host,
-            service
+            service,
+            evidence_map
         )
     )
 
@@ -1787,26 +2065,33 @@ for target in analysis_targets:
             target.get(
                 "remediation_policy",
                 "pending"
-            )
+            ),
+            evidence_map,
+            cause_map
         )
     )
 
 
-    label = (
-        f"{target_host} / "
-        f"{service}"
-    )
-
-
+    # 근거 출력
     evidence_lines.append(
         f"- [{label}]"
     )
 
     if evidence:
-        evidence_lines.extend(
-            f"  - {value}"
-            for value in evidence
-        )
+        for entry in evidence:
+            source_label = (
+                DATA_SOURCE_LABELS.get(
+                    entry["source"],
+                    entry["source"]
+                )
+            )
+
+            evidence_lines.append(
+                f"  - "
+                f"[{entry['evidence_id']}] "
+                f"[{source_label}] "
+                f"{entry['fact']}"
+            )
 
     else:
         evidence_lines.append(
@@ -1814,15 +2099,27 @@ for target in analysis_targets:
         )
 
 
+    # 원인 후보 출력
     cause_lines.append(
         f"- [{label}]"
     )
 
     if causes:
-        cause_lines.extend(
-            f"  - {value}"
-            for value in causes
-        )
+        for cause in causes:
+            cause_lines.append(
+                f"  - "
+                f"[{cause['cause_id']}] "
+                f"{cause['description']}"
+            )
+
+            cause_lines.append(
+                "    근거: "
+                + ", ".join(
+                    cause[
+                        "evidence_refs"
+                    ]
+                )
+            )
 
     else:
         cause_lines.append(
@@ -1830,6 +2127,7 @@ for target in analysis_targets:
         )
 
 
+    # 추가 확인 출력
     check_lines.append(
         f"- [{label}]"
     )
@@ -1848,8 +2146,8 @@ for target in analysis_targets:
             )
 
             check_lines.append(
-                "  - 목적: "
-                f"{check['purpose']}"
+                "  - 확인: "
+                f"{check['question']}"
             )
 
             check_lines.append(
@@ -1858,17 +2156,9 @@ for target in analysis_targets:
                 f"({check['scope']})"
             )
 
-            if check[
-                "scope_detail"
-            ]:
-                check_lines.append(
-                    "    범위: "
-                    f"{check['scope_detail']}"
-                )
-
             check_lines.append(
-                "    방법: "
-                f"{check['method']}"
+                "    범위: "
+                f"{check['scope_detail']}"
             )
 
     else:
@@ -1878,6 +2168,7 @@ for target in analysis_targets:
         )
 
 
+    # 복구 후보 출력
     remediation_lines.append(
         f"- [{label}]"
     )
@@ -1896,6 +2187,11 @@ for target in analysis_targets:
             )
 
             remediation_lines.append(
+                "    분류: "
+                f"{candidate['category_label']}"
+            )
+
+            remediation_lines.append(
                 "    유형: "
                 f"{candidate['action_label']}"
             )
@@ -1905,10 +2201,44 @@ for target in analysis_targets:
                 f"{candidate['plan']}"
             )
 
-            remediation_lines.append(
-                "    근거: "
-                f"{candidate['basis']}"
-            )
+            if candidate[
+                "evidence_refs"
+            ]:
+                remediation_lines.append(
+                    "    연결 근거: "
+                    + ", ".join(
+                        candidate[
+                            "evidence_refs"
+                        ]
+                    )
+                )
+
+            if candidate[
+                "cause_refs"
+            ]:
+                remediation_lines.append(
+                    "    연결 원인: "
+                    + ", ".join(
+                        candidate[
+                            "cause_refs"
+                        ]
+                    )
+                )
+
+            if candidate[
+                "prerequisites"
+            ]:
+                remediation_lines.append(
+                    "    사전조건:"
+                )
+
+                remediation_lines.extend(
+                    f"      - {value}"
+                    for value
+                    in candidate[
+                        "prerequisites"
+                    ]
+                )
 
             remediation_lines.append(
                 "    상태: "
