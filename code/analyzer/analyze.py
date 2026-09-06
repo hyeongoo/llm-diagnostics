@@ -51,7 +51,6 @@ def load_targets():
 def resolve_target(finding, configured_targets):
     finding_target = finding.get("target")
 
-    # 향후 host-aware detector가 target을 전달하는 경우
     if finding_target:
         if finding_target not in configured_targets:
             print(
@@ -66,7 +65,6 @@ def resolve_target(finding, configured_targets):
     if len(configured_targets) == 1:
         return configured_targets[0]
 
-    # 여러 서버가 있는데 finding에 target이 없으면 추측하지 않음
     print(
         "Unable to determine target host for anomaly finding. "
         "Multiple targets are configured, but the finding "
@@ -340,6 +338,16 @@ def build_interpreted_facts(properties, detail_data):
     }
 
 
+# 현재 AI에게 이미 제공된 진단 데이터
+def build_collected_data_info():
+    return {
+        "service_state": True,
+        "systemctl_show": True,
+        "systemctl_status": True,
+        "service_journal": True
+    }
+
+
 # Ollama Structured Output Schema 생성
 def build_response_schema(finding_id):
     return {
@@ -498,10 +506,74 @@ def get_list(item, key):
     )
 
 
-# 이미 확인된 상태를 다시 확인하는 항목인지 검사
-def is_redundant_state_check(purpose, method):
-    purpose_lower = purpose.lower()
-    method_lower = method.lower()
+# 문자열 비교용 정규화
+def normalize_text(value):
+    return " ".join(
+        str(value)
+        .lower()
+        .strip()
+        .split()
+    )
+
+
+# 기존 수집 범위를 넘어서는
+# 새로운 진단 데이터 요청인지 확인
+def has_new_diagnostic_scope(text):
+    text = normalize_text(text)
+
+    new_scope_patterns = [
+        "--since",
+        "--until",
+        "audit",
+        "ausearch",
+        "auditd",
+        "error.log",
+        "access.log",
+        "application log",
+        "app log",
+        "애플리케이션 로그",
+        "설정 파일",
+        "configuration",
+        "nginx -t",
+        "의존",
+        "dependency",
+        "socket",
+        "port",
+        "프로세스",
+        "process",
+        "cgroup",
+        "dmesg",
+        "kernel",
+        "cron",
+        "timer",
+        "automation",
+        "자동화",
+        "운영 기록",
+        "command history",
+        "shell history"
+    ]
+
+    return any(
+        pattern in text
+        for pattern in new_scope_patterns
+    )
+
+
+# 이미 수집된 상세 진단 데이터를
+# 단순히 다시 확인하는 요청인지 판단
+def is_redundant_diagnostic_review(purpose, method):
+    purpose_text = normalize_text(purpose)
+    method_text = normalize_text(method)
+
+    combined = (
+        purpose_text
+        + " "
+        + method_text
+    )
+
+    # 기존 범위를 넘어서는 새로운 진단이면 허용
+    if has_new_diagnostic_scope(combined):
+        return False
 
     redundant_phrases = [
         "현재 상태 확인",
@@ -511,38 +583,54 @@ def is_redundant_state_check(purpose, method):
         "active 상태 확인",
         "check service status",
         "verify service status",
-        "confirm service status"
+        "confirm service status",
+        "systemd properties 확인",
+        "systemd properties 분석",
+        "systemd properties를 분석",
+        "service journal 확인",
+        "service journal 분석",
+        "service journal를 분석",
+        "systemd journal 확인",
+        "systemd journal 분석",
+        "review systemd journal",
+        "analyze systemd journal",
+        "review service journal",
+        "analyze service journal"
     ]
 
     if any(
-        phrase in purpose_lower
+        phrase in combined
         for phrase in redundant_phrases
     ):
         return True
 
-    if "systemctl is-active" in method_lower:
+    # 이미 상세 수집 단계에서 실행됨
+    if "systemctl is-active" in method_text:
         return True
 
-    # systemctl status 결과는 이미 상세 수집 단계에서 확보됨
-    if method_lower.strip().startswith(
-        "systemctl status"
-    ):
+    if "systemctl status" in method_text:
+        return True
+
+    if "systemctl show" in method_text:
+        return True
+
+    # 별도의 범위나 새로운 데이터 없이
+    # journal 자체를 다시 조회하는 경우
+    if "journalctl" in method_text:
         return True
 
     return False
 
 
-# 추가 확인 항목 검증
+# 추가 확인 항목 검증 및 중복 제거
 def get_checks(item):
     checks = item.get("checks", [])
 
     if not isinstance(checks, list):
-        return [{
-            "purpose": "추가 확인 필요",
-            "method": "확인 필요"
-        }]
+        return []
 
     valid_checks = []
+    seen = set()
 
     for check in checks:
         if not isinstance(check, dict):
@@ -559,27 +647,26 @@ def get_checks(item):
         if not purpose or not method:
             continue
 
-        if is_redundant_state_check(
+        if is_redundant_diagnostic_review(
             purpose,
             method
         ):
             continue
 
+        key = (
+            normalize_text(purpose),
+            normalize_text(method)
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
         valid_checks.append({
             "purpose": purpose,
             "method": method
         })
-
-    if not valid_checks:
-        return [{
-            "purpose": (
-                "현재 수집된 정보만으로 "
-                "원인을 더 좁히기 어려움"
-            ),
-            "method": (
-                "추가 진단 데이터 확보 필요"
-            )
-        }]
 
     return valid_checks
 
@@ -587,7 +674,7 @@ def get_checks(item):
 # investigation으로 잘못 분류된
 # 실제 시스템 변경 조치 추가 차단
 def looks_like_mutating_action(description):
-    text = description.lower()
+    text = normalize_text(description)
 
     mutating_patterns = [
         "재시작",
@@ -617,14 +704,18 @@ def looks_like_mutating_action(description):
 
 
 # 안전한 investigation은 허용하고
-# 근거 없는 remediation은 차단
-def get_safe_actions(item, remediation_allowed):
+# remediation 및 중복 조사는 차단
+def get_safe_actions(
+    item,
+    remediation_allowed
+):
     actions = item.get("actions", [])
 
     if not isinstance(actions, list):
-        return ["확인 필요"]
+        return []
 
     allowed_actions = []
+    seen = set()
 
     for action in actions:
         if not isinstance(action, dict):
@@ -647,20 +738,36 @@ def get_safe_actions(item, remediation_allowed):
 
             continue
 
-        if action_type == "investigation":
-            if looks_like_mutating_action(
-                description
-            ):
-                continue
+        if action_type != "investigation":
+            continue
 
-            allowed_actions.append(
-                description
-            )
+        # investigation으로 잘못 분류된
+        # 시스템 변경 조치 차단
+        if looks_like_mutating_action(
+            description
+        ):
+            continue
 
-    if not allowed_actions:
-        return [
-            "추가로 안전하게 제안할 조사 조치 없음"
-        ]
+        # 이미 제공된 데이터를 다시 확인하는
+        # investigation도 제거
+        if is_redundant_diagnostic_review(
+            description,
+            description
+        ):
+            continue
+
+        normalized = normalize_text(
+            description
+        )
+
+        if normalized in seen:
+            continue
+
+        seen.add(normalized)
+
+        allowed_actions.append(
+            description
+        )
 
     return allowed_actions
 
@@ -806,6 +913,10 @@ for target in analysis_targets:
         )
     )
 
+    collected_data = (
+        build_collected_data_info()
+    )
+
     analysis_input = {
         **target,
         "systemd_properties": (
@@ -813,6 +924,9 @@ for target in analysis_targets:
         ),
         "interpreted_facts": (
             interpreted_facts
+        ),
+        "already_collected_data": (
+            collected_data
         )
     }
 
@@ -866,14 +980,30 @@ non_zero_exec_status_recorded가 false라는 것은
 이 값만으로 시스템에 어떠한 오류도
 존재하지 않았다고 단정하지 마세요.
 
+already_collected_data에 true로 표시된 정보는
+이미 수집되어 현재 분석 입력으로 제공된 데이터입니다.
+
+이미 수집된 다음 정보를 단순히 다시 확인하거나
+다시 분석하라고 제안하지 마세요.
+
+- 현재 서비스 상태
+- systemctl show 결과
+- systemctl status 결과
+- 현재 제공된 service journal
+
+추가 확인 항목은 현재 데이터에 없는
+새로운 정보를 얻을 수 있어야 합니다.
+
+예를 들어 설정 파일 검증, 의존 서비스 확인,
+애플리케이션 로그, audit 기록,
+특정 시점이나 추가 범위의 로그 확인 등은
+새로운 진단 정보가 될 수 있습니다.
+
+새롭게 확인할 가치가 있는 항목이 없다면
+checks는 빈 배열로 반환하세요.
+
 아래 SERVICE_DETAIL은 이상 서비스에 대해
 자동 수집한 상세 진단 데이터입니다.
-
-SERVICE_DETAIL에는 다음 정보가 포함될 수 있습니다.
-
-- systemctl show
-- systemctl status
-- 해당 서비스의 journal 로그
 
 반드시 제공된 데이터만 근거로 분석하세요.
 
@@ -891,26 +1021,26 @@ evidence:
 cause_candidates:
 - 실제 근거를 기반으로 가능한 원인을 작성하세요.
 - confirmed_fact 자체를 단순히 다시 표현하지 마세요.
-- 서비스의 상태와 그 상태가 발생한 원인을 구분하세요.
+- 서비스 상태와 그 상태가 발생한 원인을 구분하세요.
 - 직접적인 근거가 없는 종료 주체를 특정하지 마세요.
-- 오류 신호가 확인되지 않았다면
-  오류나 crash로 종료됐다고 단정하지 마세요.
 
 checks:
 - purpose에는 무엇을 알아내기 위한 확인인지 작성하세요.
 - method에는 실제 확인 방법을 작성하세요.
-- 이미 수집된 active, inactive, failed 상태 자체를
-  다시 확인하는 항목은 작성하지 마세요.
-- 이미 제공된 systemctl status 결과를
-  단순히 다시 조회하도록 제안하지 마세요.
-- 실제 원인을 더 좁힐 수 있는
-  새로운 확인만 작성하세요.
+- 이미 제공된 데이터를 다시 조회하거나
+  다시 분석하는 항목은 작성하지 마세요.
+- 새로운 정보를 확보하여
+  실제 원인을 더 좁힐 수 있는 항목만 작성하세요.
 
 actions:
 
 investigation:
-- 로그, 설정, 의존성 등
-  원인 파악을 위한 안전한 조사 조치
+- 아직 확보되지 않은 정보를 얻기 위한
+  안전한 조사 조치만 작성하세요.
+- 이미 제공된 systemctl show,
+  systemctl status,
+  service journal을 다시 확인하라는
+  조치는 작성하지 마세요.
 
 remediation:
 - 서비스 시작, 중지, 재시작
@@ -921,6 +1051,9 @@ remediation:
 
 remediation_allowed가 false이면
 remediation 조치를 제안하지 마세요.
+
+새롭게 제안할 investigation이 없다면
+actions는 빈 배열로 반환하세요.
 
 응답은 지정된 JSON Schema에 맞춰 작성하세요.
 각 필드에는 실제 분석 결과를 작성하세요.
@@ -1014,23 +1147,33 @@ for target in analysis_targets:
         f"- [{label}]"
     )
 
-    for check in checks:
-        check_lines.append(
-            f"  - 목적: {check['purpose']}"
-        )
+    if checks:
+        for check in checks:
+            check_lines.append(
+                f"  - 목적: {check['purpose']}"
+            )
 
+            check_lines.append(
+                f"    방법: {check['method']}"
+            )
+    else:
         check_lines.append(
-            f"    방법: {check['method']}"
+            "  - 추가로 필요한 새로운 확인 항목 없음"
         )
 
     action_lines.append(
         f"- [{label}]"
     )
 
-    action_lines.extend(
-        f"  - {value}"
-        for value in actions
-    )
+    if actions:
+        action_lines.extend(
+            f"  - {value}"
+            for value in actions
+        )
+    else:
+        action_lines.append(
+            "  - 추가로 안전하게 제안할 조사 조치 없음"
+        )
 
 
 llm_analysis = (
