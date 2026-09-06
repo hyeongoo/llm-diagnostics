@@ -1,5 +1,4 @@
 #!/bin/bash
-
 set -euo pipefail
 
 BASE_DIR="$HOME/aiops-openstack"
@@ -16,6 +15,7 @@ if [ ! -f "$TARGETS_FILE" ]; then
     exit 1
 fi
 
+
 # OpenStack 상태 수집
 if ! OPENSTACK_RESULT=$("$BASE_DIR/collector/collect_openstack.sh"); then
     echo "OpenStack collection failed."
@@ -31,17 +31,20 @@ if [ ! -f "$OPENSTACK_LOG" ]; then
     exit 1
 fi
 
+
 # VM 상태 수집
+HOST_TARGETS=()
 HOST_LOGS=()
 TARGET_COUNT=0
 
 while IFS= read -r TARGET; do
-    # 빈 줄과 주석 무시
     [[ -z "$TARGET" || "$TARGET" =~ ^# ]] && continue
 
     TARGET_COUNT=$((TARGET_COUNT + 1))
 
-    if ! HOST_RESULT=$("$BASE_DIR/collector/collect_host.sh" "$TARGET"); then
+    if ! HOST_RESULT=$(
+        "$BASE_DIR/collector/collect_host.sh" "$TARGET"
+    ); then
         echo "Host collection failed: $TARGET"
         exit 1
     fi
@@ -55,26 +58,30 @@ while IFS= read -r TARGET; do
         exit 1
     fi
 
+    HOST_TARGETS+=("$TARGET")
     HOST_LOGS+=("$HOST_LOG")
 
 done < "$TARGETS_FILE"
+
 
 if [ "$TARGET_COUNT" -eq 0 ]; then
     echo "No monitoring targets defined."
     exit 1
 fi
 
+
 # Diagnostic 통합
 {
     echo "===== OPENSTACK STATUS ====="
     cat "$OPENSTACK_LOG"
 
-    for HOST_LOG in "${HOST_LOGS[@]}"; do
+    for i in "${!HOST_LOGS[@]}"; do
         echo
-        echo "===== HOST STATUS ====="
-        cat "$HOST_LOG"
+        echo "===== HOST STATUS: ${HOST_TARGETS[$i]} ====="
+        cat "${HOST_LOGS[$i]}"
     done
 
 } > "$BUNDLE_LOG"
+
 
 echo "Diagnostic bundle: $BUNDLE_LOG"
