@@ -141,7 +141,10 @@ def build_analysis_targets(findings, configured_targets):
                     f"expected={finding.get('expected')}, "
                     f"actual={finding.get('actual')}"
                 ),
-                "remediation_allowed": False
+
+                # 현재는 복구 허용 조건을 별도로
+                # 검증하지 않았으므로 기본 상태는 pending
+                "remediation_policy": "pending"
             })
 
             target_number += 1
@@ -156,7 +159,7 @@ def build_analysis_targets(findings, configured_targets):
                     "confirmed_fact": (
                         "systemctl --failed에 포함됨"
                     ),
-                    "remediation_allowed": False
+                    "remediation_policy": "pending"
                 })
 
                 target_number += 1
@@ -338,13 +341,15 @@ def build_interpreted_facts(properties, detail_data):
     }
 
 
-# 현재 AI에게 이미 제공된 진단 데이터
+# 현재 분석 입력으로 이미 확보한 데이터 소스
 def build_collected_data_info():
     return {
-        "service_state": True,
-        "systemctl_show": True,
-        "systemctl_status": True,
-        "service_journal": True
+        "sources": [
+            "service_state",
+            "systemctl_show",
+            "systemctl_status",
+            "service_journal"
+        ]
     }
 
 
@@ -377,36 +382,45 @@ def build_response_schema(finding_id):
                         "purpose": {
                             "type": "string"
                         },
+                        "data_source": {
+                            "type": "string"
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": [
+                                "existing",
+                                "expanded",
+                                "new"
+                            ]
+                        },
                         "method": {
                             "type": "string"
                         }
                     },
                     "required": [
                         "purpose",
+                        "data_source",
+                        "scope",
                         "method"
                     ],
                     "additionalProperties": False
                 }
             },
-            "actions": {
+            "remediation_candidates": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "type": {
-                            "type": "string",
-                            "enum": [
-                                "investigation",
-                                "remediation"
-                            ]
-                        },
                         "description": {
+                            "type": "string"
+                        },
+                        "basis": {
                             "type": "string"
                         }
                     },
                     "required": [
-                        "type",
-                        "description"
+                        "description",
+                        "basis"
                     ],
                     "additionalProperties": False
                 }
@@ -417,7 +431,7 @@ def build_response_schema(finding_id):
             "evidence",
             "cause_candidates",
             "checks",
-            "actions"
+            "remediation_candidates"
         ],
         "additionalProperties": False
     }
@@ -466,11 +480,15 @@ def call_ollama(prompt, response_schema):
         sys.exit(1)
 
     except urllib.error.URLError as e:
-        print(f"Ollama request failed: {e}")
+        print(
+            f"Ollama request failed: {e}"
+        )
         sys.exit(1)
 
     except json.JSONDecodeError:
-        print("Invalid response from Ollama API.")
+        print(
+            "Invalid response from Ollama API."
+        )
         sys.exit(1)
 
     raw_analysis = result.get("response")
@@ -483,27 +501,27 @@ def call_ollama(prompt, response_schema):
         return json.loads(raw_analysis)
 
     except json.JSONDecodeError:
-        print("Invalid structured response from LLM.")
+        print(
+            "Invalid structured response from LLM."
+        )
         sys.exit(1)
 
 
-def get_list(item, key):
+def get_string_list(item, key):
     value = item.get(key, [])
 
     if not isinstance(value, list):
-        return ["확인 필요"]
+        return []
 
-    values = [
-        str(v).strip()
-        for v in value
-        if str(v).strip()
-    ]
+    values = []
 
-    return (
-        values
-        if values
-        else ["확인 필요"]
-    )
+    for entry in value:
+        text = str(entry).strip()
+
+        if text:
+            values.append(text)
+
+    return values
 
 
 # 문자열 비교용 정규화
@@ -516,163 +534,8 @@ def normalize_text(value):
     )
 
 
-# 기존 수집 범위를 넘어서는
-# 새로운 진단 데이터 요청인지 확인
-def has_new_diagnostic_scope(text):
-    text = normalize_text(text)
-
-    new_scope_patterns = [
-        "--since",
-        "--until",
-        "audit",
-        "ausearch",
-        "auditd",
-        "error.log",
-        "access.log",
-        "application log",
-        "app log",
-        "애플리케이션 로그",
-        "설정 파일",
-        "configuration",
-        "nginx -t",
-        "의존",
-        "dependency",
-        "socket",
-        "port",
-        "프로세스",
-        "process",
-        "cgroup",
-        "dmesg",
-        "kernel",
-        "cron",
-        "timer",
-        "automation",
-        "자동화",
-        "운영 기록",
-        "command history",
-        "shell history"
-    ]
-
-    return any(
-        pattern in text
-        for pattern in new_scope_patterns
-    )
-
-
-# 이미 수집된 상세 진단 데이터를
-# 단순히 다시 확인하는 요청인지 판단
-def is_redundant_diagnostic_review(purpose, method):
-    purpose_text = normalize_text(purpose)
-    method_text = normalize_text(method)
-
-    combined = (
-        purpose_text
-        + " "
-        + method_text
-    )
-
-    # 기존 범위를 넘어서는 새로운 진단이면 허용
-    if has_new_diagnostic_scope(combined):
-        return False
-
-    redundant_phrases = [
-        "현재 상태 확인",
-        "서비스 상태 확인",
-        "failed 상태 확인",
-        "inactive 상태 확인",
-        "active 상태 확인",
-        "check service status",
-        "verify service status",
-        "confirm service status",
-        "systemd properties 확인",
-        "systemd properties 분석",
-        "systemd properties를 분석",
-        "service journal 확인",
-        "service journal 분석",
-        "service journal를 분석",
-        "systemd journal 확인",
-        "systemd journal 분석",
-        "review systemd journal",
-        "analyze systemd journal",
-        "review service journal",
-        "analyze service journal"
-    ]
-
-    if any(
-        phrase in combined
-        for phrase in redundant_phrases
-    ):
-        return True
-
-    # 이미 상세 수집 단계에서 실행됨
-    if "systemctl is-active" in method_text:
-        return True
-
-    if "systemctl status" in method_text:
-        return True
-
-    if "systemctl show" in method_text:
-        return True
-
-    # 별도의 범위나 새로운 데이터 없이
-    # journal 자체를 다시 조회하는 경우
-    if "journalctl" in method_text:
-        return True
-
-    return False
-
-
-# 추가 확인 항목 검증 및 중복 제거
-def get_checks(item):
-    checks = item.get("checks", [])
-
-    if not isinstance(checks, list):
-        return []
-
-    valid_checks = []
-    seen = set()
-
-    for check in checks:
-        if not isinstance(check, dict):
-            continue
-
-        purpose = str(
-            check.get("purpose", "")
-        ).strip()
-
-        method = str(
-            check.get("method", "")
-        ).strip()
-
-        if not purpose or not method:
-            continue
-
-        if is_redundant_diagnostic_review(
-            purpose,
-            method
-        ):
-            continue
-
-        key = (
-            normalize_text(purpose),
-            normalize_text(method)
-        )
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-
-        valid_checks.append({
-            "purpose": purpose,
-            "method": method
-        })
-
-    return valid_checks
-
-
-# investigation으로 잘못 분류된
-# 실제 시스템 변경 조치 추가 차단
+# 조사 항목에 실제 시스템 변경 명령이
+# 섞여 들어오는 경우를 막기 위한 일반 안전장치
 def looks_like_mutating_action(description):
     text = normalize_text(description)
 
@@ -703,73 +566,153 @@ def looks_like_mutating_action(description):
     )
 
 
-# 안전한 investigation은 허용하고
-# remediation 및 중복 조사는 차단
-def get_safe_actions(
-    item,
-    remediation_allowed
-):
-    actions = item.get("actions", [])
+# 구조화된 scope를 기준으로
+# 실제 새로운 진단 정보만 남김
+def get_checks(item):
+    checks = item.get("checks", [])
 
-    if not isinstance(actions, list):
+    if not isinstance(checks, list):
         return []
 
-    allowed_actions = []
+    valid_checks = []
     seen = set()
 
-    for action in actions:
-        if not isinstance(action, dict):
+    for check in checks:
+        if not isinstance(check, dict):
             continue
 
-        action_type = action.get("type")
-
-        description = str(
-            action.get("description", "")
+        purpose = str(
+            check.get("purpose", "")
         ).strip()
 
-        if not description:
-            continue
+        data_source = str(
+            check.get("data_source", "")
+        ).strip()
 
-        if action_type == "remediation":
-            if remediation_allowed:
-                allowed_actions.append(
-                    description
-                )
+        scope = str(
+            check.get("scope", "")
+        ).strip()
 
-            continue
+        method = str(
+            check.get("method", "")
+        ).strip()
 
-        if action_type != "investigation":
-            continue
-
-        # investigation으로 잘못 분류된
-        # 시스템 변경 조치 차단
-        if looks_like_mutating_action(
-            description
+        if (
+            not purpose
+            or not data_source
+            or not scope
+            or not method
         ):
             continue
 
-        # 이미 제공된 데이터를 다시 확인하는
-        # investigation도 제거
-        if is_redundant_diagnostic_review(
-            description,
-            description
-        ):
+        # 이미 제공된 데이터를 그대로 다시 보는 항목은 제거
+        if scope == "existing":
             continue
 
-        normalized = normalize_text(
-            description
-        )
-
-        if normalized in seen:
+        if scope not in [
+            "expanded",
+            "new"
+        ]:
             continue
 
-        seen.add(normalized)
+        # 추가 확인 항목은 read-only 조사여야 함
+        if looks_like_mutating_action(method):
+            continue
 
-        allowed_actions.append(
-            description
+        key = (
+            normalize_text(purpose),
+            normalize_text(data_source),
+            scope,
+            normalize_text(method)
         )
 
-    return allowed_actions
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        valid_checks.append({
+            "purpose": purpose,
+            "data_source": data_source,
+            "scope": scope,
+            "method": method
+        })
+
+    return valid_checks
+
+
+# 복구 조치 후보에 Python Policy 상태 부여
+def evaluate_remediation_candidates(
+    item,
+    remediation_policy
+):
+    candidates = item.get(
+        "remediation_candidates",
+        []
+    )
+
+    if not isinstance(candidates, list):
+        return []
+
+    if remediation_policy not in [
+        "allowed",
+        "pending",
+        "blocked"
+    ]:
+        remediation_policy = "pending"
+
+    policy_reasons = {
+        "allowed": (
+            "정책의 복구 허용 조건이 충족됨"
+        ),
+        "pending": (
+            "복구 허용 조건이 아직 검증되지 않음"
+        ),
+        "blocked": (
+            "정책에 의해 복구 조치가 차단됨"
+        )
+    }
+
+    evaluated = []
+    seen = set()
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+
+        description = str(
+            candidate.get("description", "")
+        ).strip()
+
+        basis = str(
+            candidate.get("basis", "")
+        ).strip()
+
+        if not description or not basis:
+            continue
+
+        key = (
+            normalize_text(description),
+            normalize_text(basis)
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        evaluated.append({
+            "description": description,
+            "basis": basis,
+            "status": remediation_policy,
+            "policy_reason": (
+                policy_reasons[
+                    remediation_policy
+                ]
+            )
+        })
+
+    return evaluated
 
 
 # -------------------------
@@ -802,14 +745,20 @@ with open(
     anomaly_result = json.load(f)
 
 if anomaly_result.get("status") != "ANOMALY":
-    print("No anomaly detected. AI analysis skipped.")
+    print(
+        "No anomaly detected. "
+        "AI analysis skipped."
+    )
     sys.exit(0)
 
 latest_log = anomaly_result.get(
     "diagnostic_file"
 )
 
-if not latest_log or not os.path.exists(latest_log):
+if (
+    not latest_log
+    or not os.path.exists(latest_log)
+):
     print(
         "Diagnostic log referenced by "
         "anomaly result not found."
@@ -917,8 +866,17 @@ for target in analysis_targets:
         build_collected_data_info()
     )
 
+    # remediation 정책은 LLM에게 넘기지 않음.
+    # LLM은 근거 기반 후보만 제안하고,
+    # 허용 여부는 Python Policy가 결정함.
     analysis_input = {
-        **target,
+        "finding_id": finding_id,
+        "type": target["type"],
+        "target": target_host,
+        "subject": subject,
+        "confirmed_fact": (
+            target["confirmed_fact"]
+        ),
         "systemd_properties": (
             systemd_properties
         ),
@@ -936,8 +894,10 @@ for target in analysis_targets:
         indent=2
     )
 
-    response_schema = build_response_schema(
-        finding_id
+    response_schema = (
+        build_response_schema(
+            finding_id
+        )
     )
 
     prompt = f"""
@@ -980,30 +940,46 @@ non_zero_exec_status_recorded가 false라는 것은
 이 값만으로 시스템에 어떠한 오류도
 존재하지 않았다고 단정하지 마세요.
 
-already_collected_data에 true로 표시된 정보는
-이미 수집되어 현재 분석 입력으로 제공된 데이터입니다.
+already_collected_data의 sources는
+현재 분석 입력에 이미 포함된 데이터입니다.
 
-이미 수집된 다음 정보를 단순히 다시 확인하거나
-다시 분석하라고 제안하지 마세요.
+checks의 scope는 다음 기준으로 분류하세요.
 
-- 현재 서비스 상태
-- systemctl show 결과
-- systemctl status 결과
-- 현재 제공된 service journal
+existing:
+- 이미 제공된 데이터를 같은 범위에서 다시 확인
 
-추가 확인 항목은 현재 데이터에 없는
-새로운 정보를 얻을 수 있어야 합니다.
+expanded:
+- 이미 제공된 데이터 소스를 사용하지만
+  다른 시간 범위 또는 추가 범위를 조회하여
+  새로운 정보를 얻는 경우
 
-예를 들어 설정 파일 검증, 의존 서비스 확인,
-애플리케이션 로그, audit 기록,
-특정 시점이나 추가 범위의 로그 확인 등은
-새로운 진단 정보가 될 수 있습니다.
+new:
+- 현재 제공되지 않은 새로운 데이터 소스에서
+  정보를 확인하는 경우
 
-새롭게 확인할 가치가 있는 항목이 없다면
-checks는 빈 배열로 반환하세요.
+existing 범위의 확인은 새로운 정보가 아니므로
+checks에 포함하지 마세요.
 
-아래 SERVICE_DETAIL은 이상 서비스에 대해
-자동 수집한 상세 진단 데이터입니다.
+checks에는 실제 원인을 더 좁히기 위해
+새로운 정보를 얻을 수 있는 항목만 작성하세요.
+
+remediation_candidates에는
+서비스 시작, 재시작, 설정 변경 등
+실제 시스템 상태를 변경하는 조치 중
+현재 근거를 바탕으로 고려할 가치가 있는 후보만 작성하세요.
+
+각 remediation 후보에는
+왜 그 조치를 고려할 수 있는지
+basis에 현재 근거를 작성하세요.
+
+근거가 부족한 복구 조치는
+억지로 만들지 마세요.
+
+복구 조치의 허용 여부는
+LLM이 결정하지 않습니다.
+Python Policy가 별도로 판단하므로,
+근거가 있는 복구 후보라면
+허용 여부를 추측하지 말고 후보로 반환하세요.
 
 반드시 제공된 데이터만 근거로 분석하세요.
 
@@ -1013,9 +989,7 @@ checks는 빈 배열로 반환하세요.
 "확인 필요"라고 작성하세요.
 
 evidence:
-- systemd_properties,
-  interpreted_facts,
-  SERVICE_DETAIL에서 실제 확인되는 근거만 작성하세요.
+- 실제 제공된 데이터에서 확인되는 근거만 작성하세요.
 - 존재하지 않는 로그나 사실을 만들어내지 마세요.
 
 cause_candidates:
@@ -1025,38 +999,13 @@ cause_candidates:
 - 직접적인 근거가 없는 종료 주체를 특정하지 마세요.
 
 checks:
-- purpose에는 무엇을 알아내기 위한 확인인지 작성하세요.
+- purpose에는 무엇을 알아내려는지 작성하세요.
+- data_source에는 확인할 데이터 소스를 작성하세요.
+- scope에는 existing, expanded, new 중 하나를 작성하세요.
 - method에는 실제 확인 방법을 작성하세요.
-- 이미 제공된 데이터를 다시 조회하거나
-  다시 분석하는 항목은 작성하지 마세요.
-- 새로운 정보를 확보하여
-  실제 원인을 더 좁힐 수 있는 항목만 작성하세요.
-
-actions:
-
-investigation:
-- 아직 확보되지 않은 정보를 얻기 위한
-  안전한 조사 조치만 작성하세요.
-- 이미 제공된 systemctl show,
-  systemctl status,
-  service journal을 다시 확인하라는
-  조치는 작성하지 마세요.
-
-remediation:
-- 서비스 시작, 중지, 재시작
-- 시스템 재부팅
-- 설정 변경
-- 파일 수정 또는 삭제 등
-  실제 시스템 상태를 변경하는 조치
-
-remediation_allowed가 false이면
-remediation 조치를 제안하지 마세요.
-
-새롭게 제안할 investigation이 없다면
-actions는 빈 배열로 반환하세요.
-
-응답은 지정된 JSON Schema에 맞춰 작성하세요.
-각 필드에는 실제 분석 결과를 작성하세요.
+- 시스템 상태를 변경하지 않는 조사만 작성하세요.
+- 이미 제공된 데이터를 같은 범위에서
+  다시 확인하는 항목은 작성하지 마세요.
 
 SERVICE_DETAIL:
 
@@ -1087,7 +1036,13 @@ SERVICE_DETAIL:
 evidence_lines = []
 cause_lines = []
 check_lines = []
-action_lines = []
+remediation_lines = []
+
+status_labels = {
+    "allowed": "허용",
+    "pending": "보류",
+    "blocked": "차단"
+}
 
 for target in analysis_targets:
     finding_id = target["finding_id"]
@@ -1099,12 +1054,12 @@ for target in analysis_targets:
         {}
     )
 
-    evidence = get_list(
+    evidence = get_string_list(
         item,
         "evidence"
     )
 
-    causes = get_list(
+    causes = get_string_list(
         item,
         "cause_candidates"
     )
@@ -1113,11 +1068,13 @@ for target in analysis_targets:
         item
     )
 
-    actions = get_safe_actions(
-        item,
-        target.get(
-            "remediation_allowed",
-            False
+    remediation_candidates = (
+        evaluate_remediation_candidates(
+            item,
+            target.get(
+                "remediation_policy",
+                "pending"
+            )
         )
     )
 
@@ -1129,19 +1086,29 @@ for target in analysis_targets:
         f"- [{label}]"
     )
 
-    evidence_lines.extend(
-        f"  - {value}"
-        for value in evidence
-    )
+    if evidence:
+        evidence_lines.extend(
+            f"  - {value}"
+            for value in evidence
+        )
+    else:
+        evidence_lines.append(
+            "  - 추가 근거 없음"
+        )
 
     cause_lines.append(
         f"- [{label}]"
     )
 
-    cause_lines.extend(
-        f"  - {value}"
-        for value in causes
-    )
+    if causes:
+        cause_lines.extend(
+            f"  - {value}"
+            for value in causes
+        )
+    else:
+        cause_lines.append(
+            "  - 원인 후보 확인 필요"
+        )
 
     check_lines.append(
         f"- [{label}]"
@@ -1150,29 +1117,56 @@ for target in analysis_targets:
     if checks:
         for check in checks:
             check_lines.append(
-                f"  - 목적: {check['purpose']}"
+                f"  - 목적: "
+                f"{check['purpose']}"
             )
 
             check_lines.append(
-                f"    방법: {check['method']}"
+                f"    데이터: "
+                f"{check['data_source']} "
+                f"({check['scope']})"
+            )
+
+            check_lines.append(
+                f"    방법: "
+                f"{check['method']}"
             )
     else:
         check_lines.append(
-            "  - 추가로 필요한 새로운 확인 항목 없음"
+            "  - 유효한 추가 확인 항목 없음"
         )
 
-    action_lines.append(
+    remediation_lines.append(
         f"- [{label}]"
     )
 
-    if actions:
-        action_lines.extend(
-            f"  - {value}"
-            for value in actions
-        )
+    if remediation_candidates:
+        for candidate in remediation_candidates:
+            status = candidate["status"]
+
+            remediation_lines.append(
+                f"  - 제안: "
+                f"{candidate['description']}"
+            )
+
+            remediation_lines.append(
+                f"    근거: "
+                f"{candidate['basis']}"
+            )
+
+            remediation_lines.append(
+                f"    상태: "
+                f"{status_labels[status]} "
+                f"({status})"
+            )
+
+            remediation_lines.append(
+                f"    정책: "
+                f"{candidate['policy_reason']}"
+            )
     else:
-        action_lines.append(
-            "  - 추가로 안전하게 제안할 조사 조치 없음"
+        remediation_lines.append(
+            "  - 근거 기반 복구 조치 후보 없음"
         )
 
 
@@ -1186,8 +1180,8 @@ llm_analysis = (
     "## 5. 추가 확인 항목\n"
     + "\n".join(check_lines)
     + "\n\n"
-    "## 6. 권장 조치\n"
-    + "\n".join(action_lines)
+    "## 6. 복구 조치 후보\n"
+    + "\n".join(remediation_lines)
 )
 
 analysis = (
