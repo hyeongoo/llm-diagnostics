@@ -12,9 +12,15 @@ from datetime import datetime
 BASE_DIR = os.path.expanduser("~/aiops-openstack")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 TARGETS_FILE = os.path.join(BASE_DIR, "config", "targets.txt")
-SERVICE_DETAIL_COLLECTOR = os.path.join(BASE_DIR, "collector", "collect_service_detail.sh")
+SERVICE_DETAIL_COLLECTOR = os.path.join(
+    BASE_DIR,
+    "collector",
+    "collect_service_detail.sh"
+)
+
 OLLAMA_URL = "http://192.168.214.1:11434/api/generate"
 MODEL = "qwen3:1.7b"
+
 
 DATA_SOURCE_LABELS = {
     "rule_finding": "Rule Engine 탐지 결과",
@@ -26,29 +32,48 @@ DATA_SOURCE_LABELS = {
 
 def load_targets():
     if not os.path.exists(TARGETS_FILE):
-        print(f"Targets file not found: {TARGETS_FILE}")
+        print(
+            f"Targets file not found: "
+            f"{TARGETS_FILE}"
+        )
         sys.exit(1)
 
-    with open(TARGETS_FILE, "r", encoding="utf-8") as f:
+    with open(
+        TARGETS_FILE,
+        "r",
+        encoding="utf-8"
+    ) as f:
         targets = [
-            line.strip() for line in f
-            if line.strip() and not line.strip().startswith("#")
+            line.strip()
+            for line in f
+            if (
+                line.strip()
+                and not line.strip().startswith("#")
+            )
         ]
 
     if not targets:
-        print("No monitoring target defined.")
+        print(
+            "No monitoring target defined."
+        )
         sys.exit(1)
 
     return targets
 
 
-def resolve_target(finding, configured_targets):
-    target = finding.get("target")
+def resolve_target(
+    finding,
+    configured_targets
+):
+    target = finding.get(
+        "target"
+    )
 
     if target:
         if target not in configured_targets:
             print(
-                f"Finding references an unknown target: "
+                "Finding references an "
+                "unknown target: "
                 f"{target}"
             )
             sys.exit(1)
@@ -63,49 +88,6 @@ def resolve_target(finding, configured_targets):
         "for anomaly finding."
     )
     sys.exit(1)
-
-
-def format_finding(finding, configured_targets):
-    target = resolve_target(
-        finding,
-        configured_targets
-    )
-
-    finding_type = finding.get("type")
-
-    if finding_type == "service_state_mismatch":
-        return (
-            f"- [{target}] "
-            f"{finding.get('service')}: "
-            f"expected={finding.get('expected')}, "
-            f"actual={finding.get('actual')}"
-        )
-
-    if finding_type == "failed_services_exceeded":
-        services = finding.get(
-            "services",
-            []
-        )
-
-        service_list = (
-            ", ".join(services)
-            if services
-            else "확인 필요"
-        )
-
-        return (
-            f"- [{target}] Failed Services: "
-            f"expected_max="
-            f"{finding.get('expected_max')}, "
-            f"actual="
-            f"{finding.get('actual')} "
-            f"({service_list})"
-        )
-
-    return (
-        f"- [{target}] "
-        f"{json.dumps(finding, ensure_ascii=False)}"
-    )
 
 
 def build_analysis_targets(
@@ -569,34 +551,26 @@ def build_prompt(
 규칙:
 - observations만 현재 시스템에서 직접 관측된 사실입니다.
 - 존재하지 않는 사실이나 Observation을 만들지 마세요.
+- 일반적인 Linux/systemd 지식은 해석에 사용할 수 있지만, 관측된 사실과 추론을 구분하고 확인되지 않은 내용을 확정적으로 표현하지 마세요.
 - 실패 메커니즘, 원인 후보, 추가 확인, 복구 후보는 관련 Observation ID를 연결하세요.
-- 일반적인 Linux/systemd 지식은 해석에 사용할 수 있지만, 관측되지 않은 내용을 현재 시스템의 확정 사실처럼 표현하지 마세요.
 
-- 명령어, 상태, 종료 코드가 관측되었다는 이유만으로 설정 오류, 사용자 실수, 잘못된 변경이라고 단정하지 마세요.
-- 원인 후보가 Observation에서 직접 확인되지 않는다면 확정하지 말고 '가능성', '확인 필요' 등 불확실성을 명확하게 표현하세요.
-- failed/inactive 같은 결과 상태를 그대로 원인이라고 반복하지 마세요.
+- 명령어, 상태, 종료 코드, 설정값이 관측되었다는 이유만으로 설정 오류나 사용자 실수라고 단정하지 마세요.
+- failed/inactive, LoadState, UnitFileState 같은 상태나 메타데이터를 근거 없이 장애 원인으로 해석하지 마세요.
+- 원인 후보는 Observation과 기술적 근거를 바탕으로 합리적으로 추론할 수 있는 경우에만 제안하고, 확인되지 않은 내용은 가능성으로 표현하세요.
+- 근거가 부족하면 cause_candidates를 빈 배열로 반환하세요.
 
-- 핵심 Observation만 선택하고, 관련성이 낮은 정보는 억지로 포함하지 마세요.
-
-- checks.data_source에는 O1, O2 같은 Observation ID를 작성하지 마세요.
-- checks.data_source에는 실제로 추가 확인할 로그, 설정, 명령, 시스템 정보 또는 외부 데이터 소스를 자유롭게 작성하세요.
+- checks.data_source에는 Observation ID가 아니라 실제로 추가 확인할 로그, 설정, 명령, 시스템 정보 또는 외부 데이터 소스를 작성하세요.
 - Python에 미리 정의되지 않은 새로운 데이터 소스도 필요한 경우 자유롭게 제안할 수 있습니다.
-- 추가 확인은 이미 Observation에 답이 있는 내용을 반복하지 말고, 현재 근거만으로 확인할 수 없는 내용을 조사하기 위해 제안하세요.
+- 이미 observations에 답이 있는 내용을 단순히 다시 확인하지 마세요. 같은 데이터 소스를 다시 확인해야 한다면 기존 데이터보다 무엇을 추가로 확인할지 명확히 작성하세요.
 
 - remediation_candidates.action은 Python에 미리 정의된 목록에 맞출 필요가 없습니다.
-- 복구 후보는 현재 확인된 사실을 기반으로 한 제안이어야 하며, 확인되지 않은 원인을 사실이라고 전제해서는 안 됩니다.
-- 원인이 아직 확인되지 않은 경우 원인 확인이 선행되어야 하는 조치를 바로 확정적으로 제안하지 마세요.
-- 조건에 따라 가능한 조치라면 어떤 사실이 추가로 확인되어야 하는지 rationale 또는 caution에 명확히 작성하세요.
+- 복구 조치는 현재 확인된 사실을 기반으로 제안하고, 확인되지 않은 원인을 전제로 설정 변경이나 재시작을 확정적으로 제안하지 마세요.
+- 추가 확인 결과에 따라 가능한 조치라면 조건부로 표현하고, 필요한 확인 사항과 위험 또는 재실패 가능성을 rationale 또는 caution에 작성하세요.
 - 복구 조치는 제안일 뿐 실행되지 않습니다.
-- 현재 근거만으로 성공을 보장할 수 없다면 '문제를 해결한다', '원인을 제거한다', '정상화된다'고 단정하지 마세요.
-- 불확실성이나 재실패 가능성은 caution에 작성하세요.
-- 원인 후보를 일반적인 장애 원인 목록처럼 나열하지 마세요. Observation과 일반적인 기술 지식을 바탕으로 합리적으로 추론할 수 있는 원인만 제안하고, 직접 확인되지 않은 내용은 가능성으로 표현하세요. 근거가 부족하면 cause_candidates를 빈 배열로 반환하세요.
 
-- 환각과 과도한 비약을 피하고, 알 수 없는 내용은 알 수 없다고 표현하세요.
-- LoadState, UnitFileState 같은 메타데이터 값을 현재 장애의 원인으로 연결하려면 그 관계를 뒷받침하는 Observation이 있어야 합니다. 단순히 값이 존재한다는 이유만으로 원인처럼 해석하지 마세요.
-- 관측된 설정이나 명령이 의도된 것인지 잘못된 것인지는 Observation만으로 확인되지 않으면 단정하지 마세요. 필요한 경우 의도된 설정인지 추가 확인이 필요하다고 표현하세요.
-- 이미 observations에 포함된 상태나 로그를 단순히 다시 확인하는 항목은 추가 확인으로 제안하지 마세요. 같은 데이터 소스를 다시 볼 경우에는 기존 범위보다 무엇을 더 확인할지 명확히 작성하세요.
-- 원인이 확인되지 않은 상태에서 설정 변경이나 재시작을 필수 조치처럼 표현하지 마세요. 추가 확인 결과에 따라 가능한 조치라면 '만약 ~가 확인되면 ~를 고려'하는 조건부 형태로 표현하세요.
+- selected_observations에는 장애 상태와 실패 과정을 설명하는 데 직접적으로 중요한 근거만 선택하세요.
+- 같은 사실을 반복하는 status와 journal 로그는 모두 선택할 필요가 없으며, 장애 판단에 직접 필요하지 않은 부가 정보는 제외하세요.
+
 - 모든 설명은 가능하면 한국어로 작성하세요.
 
 failure_mechanism은 관측 데이터로 설명 가능한 직접적인 실패 과정입니다.
@@ -609,7 +583,6 @@ def call_ollama(
     prompt,
     response_schema
 ):
-    
     payload = {
         "model":
             MODEL,
@@ -1000,6 +973,28 @@ def merge_refs(
     return merged
 
 
+def compact_text(
+    value,
+    max_chars=180
+):
+    """
+    운영자용 출력만 짧게 만들고,
+    상세 원문은 Trace에 그대로 남긴다.
+    """
+
+    text = " ".join(
+        str(value).split()
+    )
+
+    if len(text) <= max_chars:
+        return text
+
+    return (
+        text[:max_chars].rstrip()
+        + "..."
+    )
+
+
 def save_llm_trace(
     trace_entries,
     diagnostic_file,
@@ -1103,14 +1098,6 @@ def main():
         []
     )
 
-    finding_lines = [
-        format_finding(
-            item,
-            configured_targets
-        )
-        for item in findings
-    ]
-
     targets = build_analysis_targets(
         findings,
         configured_targets
@@ -1121,16 +1108,6 @@ def main():
             "No analysis target found."
         )
         sys.exit(1)
-
-    rule_analysis = (
-        "## 1. 상태 요약\n"
-        "- 규칙 기반 이상 상태가 탐지됨\n"
-        "- 탐지 상태: ANOMALY\n\n"
-        "## 2. 이상 징후\n"
-        + "\n".join(
-            finding_lines
-        )
-    )
 
     results = {}
     detail_cache = {}
@@ -1227,18 +1204,16 @@ def main():
                 observations,
         }
 
-        raw_response = (
-            call_ollama(
-                build_prompt(
-                    analysis_input
-                ),
-                build_response_schema(
-                    finding_id,
-                    list(
-                        observation_map.keys()
-                    )
-                ),
-            )
+        raw_response = call_ollama(
+            build_prompt(
+                analysis_input
+            ),
+            build_response_schema(
+                finding_id,
+                list(
+                    observation_map.keys()
+                )
+            ),
         )
 
         validated = (
@@ -1271,10 +1246,11 @@ def main():
                 validated,
         }
 
-    evidence_lines = []
-    cause_lines = []
-    check_lines = []
-    remediation_lines = []
+    report_lines = [
+        "## 진단 결과",
+        "- 상태: ANOMALY",
+    ]
+
     trace_entries = []
 
     for target in targets:
@@ -1293,11 +1269,6 @@ def main():
         service = result[
             "service"
         ]
-
-        label = (
-            f"{host} / "
-            f"{service}"
-        )
 
         observation_map = result[
             "observation_map"
@@ -1323,6 +1294,8 @@ def main():
             "remediation_candidates"
         ]
 
+        # 상세 Observation / LLM 원본 / 검증 결과는
+        # Trace에 그대로 보존한다.
         trace_entries.append({
             "finding_id":
                 finding_id,
@@ -1347,56 +1320,43 @@ def main():
                 validated,
         })
 
-        selected_refs = validated[
+        report_lines.extend([
+            "",
+            f"### {host} / {service}",
+            "",
+            "핵심 근거",
+        ])
+
+        # 운영자 화면에는 최대 3개의 핵심 근거만 표시한다.
+        key_refs = validated[
             "selected_observations"
         ]
 
-        mechanism_refs = (
-            mechanism[
-                "observation_refs"
-            ]
-            if mechanism
-            else []
-        )
+        # LLM이 selected_observations를 비운 경우에는
+        # 실제 분석에서 사용한 Observation으로 대체한다.
+        if not key_refs:
+            fallback_refs = []
 
-        cause_refs = [
-            ref
-            for item in causes
-            for ref in item[
-                "observation_refs"
-            ]
-        ]
+            if mechanism:
+                fallback_refs.extend(
+                    mechanism[
+                        "observation_refs"
+                    ]
+                )
 
-        check_refs = [
-            ref
-            for item in checks
-            for ref in item[
-                "observation_refs"
-            ]
-        ]
+            for item in causes:
+                fallback_refs.extend(
+                    item[
+                        "observation_refs"
+                    ]
+                )
 
-        remediation_refs = [
-            ref
-            for item in remediation
-            for ref in item[
-                "observation_refs"
-            ]
-        ]
+            key_refs = merge_refs(
+                fallback_refs
+            )
 
-        used_refs = merge_refs(
-            selected_refs,
-            mechanism_refs,
-            cause_refs,
-            check_refs,
-            remediation_refs,
-        )
-
-        evidence_lines.append(
-            f"- [{label}]"
-        )
-
-        if used_refs:
-            for ref in used_refs:
+        if key_refs:
+            for ref in key_refs:
                 observation = (
                     observation_map[
                         ref
@@ -1414,140 +1374,131 @@ def main():
                     )
                 )
 
-                evidence_lines.append(
-                    f"  - [{ref}] "
-                    f"[{source}] "
-                    f"{observation['content']}"
+                report_lines.append(
+                    f"- [{source}] "
+                    f"{compact_text(observation['content'])}"
                 )
 
         else:
-            evidence_lines.append(
-                "  - 선택된 "
-                "Observation 없음"
+            report_lines.append(
+                "- 핵심 근거 선택 없음"
             )
 
-        cause_lines.append(
-            f"- [{label}]"
-        )
+        report_lines.extend([
+            "",
+            "AI 판단",
+        ])
 
         if mechanism:
-            cause_lines.append(
-                "  - 실패 메커니즘: "
-                f"{mechanism['description']}"
-            )
-
-            cause_lines.append(
-                "    관측 근거: "
-                + ", ".join(
+            report_lines.append(
+                "- 실패 메커니즘: "
+                + compact_text(
                     mechanism[
-                        "observation_refs"
+                        "description"
                     ]
                 )
             )
 
         else:
-            cause_lines.append(
-                "  - 실패 메커니즘: "
-                "확인 필요"
+            report_lines.append(
+                "- 실패 메커니즘: "
+                "현재 근거만으로 확인되지 않음"
             )
 
         if causes:
-            cause_lines.append(
-                "  - 원인 후보:"
+            report_lines.append(
+                "- 원인 후보: "
+                + compact_text(
+                    causes[0][
+                        "description"
+                    ]
+                )
             )
-
-            for item in causes:
-                cause_lines.append(
-                    "    - "
-                    f"{item['description']}"
-                )
-
-                cause_lines.append(
-                    "      관측 근거: "
-                    + ", ".join(
-                        item[
-                            "observation_refs"
-                        ]
-                    )
-                )
 
         else:
-            cause_lines.append(
-                "  - 원인 후보: "
-                "현재 근거만으로 "
-                "확인되지 않음"
+            report_lines.append(
+                "- 원인 후보: "
+                "현재 근거만으로 확인되지 않음"
             )
 
-        check_lines.append(
-            f"- [{label}]"
-        )
+        report_lines.extend([
+            "",
+            "추가 확인",
+        ])
 
+        # 상세 후보 전체는 Trace에 보존하고
+        # 운영자에게는 우선순위가 가장 높은 1개만 표시한다.
         if checks:
-            for item in checks:
-                check_lines.append(
-                    "  - 목적: "
-                    f"{item['purpose']}"
-                )
+            check = checks[0]
 
-                check_lines.append(
-                    "    데이터: "
-                    f"{item['data_source']}"
+            report_lines.append(
+                "- "
+                + compact_text(
+                    check[
+                        "purpose"
+                    ],
+                    160
                 )
-
-                check_lines.append(
-                    "    범위: "
-                    f"{item['scope_detail']}"
-                )
-
-                check_lines.append(
-                    "    제안 근거: "
-                    + ", ".join(
-                        item[
-                            "observation_refs"
-                        ]
-                    )
-                )
-
-        else:
-            check_lines.append(
-                "  - 추가 확인 "
-                "제안 없음"
             )
 
-        remediation_lines.append(
-            f"- [{label}]"
-        )
-
-        if remediation:
-            for item in remediation:
-                remediation_lines.append(
-                    "  - 제안: "
-                    f"{item['action']}"
+            report_lines.append(
+                "  확인 대상: "
+                + compact_text(
+                    check[
+                        "data_source"
+                    ],
+                    120
                 )
-
-                remediation_lines.append(
-                    "    이유: "
-                    f"{item['rationale']}"
-                )
-
-                remediation_lines.append(
-                    "    주의: "
-                    f"{item['caution']}"
-                )
-
-                remediation_lines.append(
-                    "    관측 근거: "
-                    + ", ".join(
-                        item[
-                            "observation_refs"
-                        ]
-                    )
-                )
+            )
 
         else:
-            remediation_lines.append(
-                "  - 복구 조치 "
-                "후보 없음"
+            report_lines.append(
+                "- 추가 확인 제안 없음"
+            )
+
+        report_lines.extend([
+            "",
+            "조치 제안",
+        ])
+
+        # 상세 복구 후보 전체는 Trace에 보존하고
+        # 운영자에게는 우선순위가 가장 높은 1개만 표시한다.
+        if remediation:
+            action = remediation[0]
+
+            report_lines.append(
+                "- "
+                + compact_text(
+                    action[
+                        "action"
+                    ],
+                    160
+                )
+            )
+
+            report_lines.append(
+                "  이유: "
+                + compact_text(
+                    action[
+                        "rationale"
+                    ],
+                    180
+                )
+            )
+
+            report_lines.append(
+                "  주의: "
+                + compact_text(
+                    action[
+                        "caution"
+                    ],
+                    180
+                )
+            )
+
+        else:
+            report_lines.append(
+                "- 복구 조치 후보 없음"
             )
 
     trace_output = (
@@ -1558,31 +1509,11 @@ def main():
         )
     )
 
-    llm_analysis = (
-        "## 3. 근거\n"
-        + "\n".join(
-            evidence_lines
-        )
-        + "\n\n"
-        "## 4. 원인 분석\n"
-        + "\n".join(
-            cause_lines
-        )
-        + "\n\n"
-        "## 5. 추가 확인 항목\n"
-        + "\n".join(
-            check_lines
-        )
-        + "\n\n"
-        "## 6. 복구 조치 후보\n"
-        + "\n".join(
-            remediation_lines
-        )
-    )
-
     analysis = (
-        f"{rule_analysis}\n\n"
-        f"{llm_analysis}\n"
+        "\n".join(
+            report_lines
+        )
+        + "\n"
     )
 
     timestamp = (
