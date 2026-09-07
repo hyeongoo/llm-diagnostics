@@ -1313,6 +1313,45 @@ def merge_observation_refs(*ref_groups):
             merged.append(ref)
 
     return merged
+    
+def save_llm_trace(
+    trace_entries,
+    diagnostic_file,
+    anomaly_file
+):
+    timestamp = datetime.now().strftime(
+        "%Y%m%d_%H%M%S"
+    )
+
+    output = os.path.join(
+        LOG_DIR,
+        f"llm_trace_{timestamp}.json"
+    )
+
+    trace_result = {
+        "diagnostic_file":
+            diagnostic_file,
+
+        "anomaly_file":
+            anomaly_file,
+
+        "findings":
+            trace_entries
+    }
+
+    with open(
+        output,
+        "w",
+        encoding="utf-8"
+    ) as f:
+        json.dump(
+            trace_result,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    return output
 
 
 # -------------------------
@@ -1750,6 +1789,7 @@ evidence_lines = []
 cause_lines = []
 check_lines = []
 remediation_lines = []
+trace_entries = []
 
 
 status_labels = {
@@ -1827,7 +1867,39 @@ for target in analysis_targets:
             cause_map
         )
     )
+    
+    trace_entries.append({
+        "finding_id":
+            finding_id,
 
+        "host":
+            target_host,
+
+        "service":
+            service,
+
+        "observations":
+            list(
+                observation_map.values()
+            ),
+
+        "llm_response":
+            item,
+
+        "validated_result": {
+            "selected_observations":
+                selected_refs,
+
+            "cause_candidates":
+                causes,
+
+            "checks":
+                checks,
+
+            "remediation_candidates":
+                remediation_candidates
+        }
+    })
 
     cause_observation_refs = []
 
@@ -2054,6 +2126,11 @@ for target in analysis_targets:
             "  - 근거 기반 복구 조치 후보 없음"
         )
 
+trace_output = save_llm_trace(
+    trace_entries,
+    latest_log,
+    latest_anomaly
+)
 
 llm_analysis = (
     "## 3. 근거\n"
@@ -2114,6 +2191,10 @@ print(
 
 print(
     f"Detection  : {latest_anomaly}"
+)
+
+print(
+    f"Trace      : {trace_output}"
 )
 
 print(
