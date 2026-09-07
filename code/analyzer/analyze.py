@@ -1327,7 +1327,6 @@ def main():
             "핵심 근거",
         ])
 
-        # 운영자 화면에는 최대 3개의 핵심 근거만 표시한다.
         key_refs = validated[
             "selected_observations"
         ]
