@@ -58,13 +58,13 @@
 
 ### OpenStack 인프라 상태 수집
 
-![OpenStack 인프라 상태 수집 결과.png](./picture/OpenStack%20인프라%20상태%20수집%20결과.png)
+![OpenStack 상태 수집 결과.png](./picture/OpenStack%20상태%20수집%20결과.png)
 
 ---
 
 ### Private 인스턴스 상태 및 오류 로그 수집
 
-![OpenStack 인스턴스 상태 수집 결과.png](./picture/OpenStack%20인스턴스%20상태%20수집%20결과.png)
+![Private Instance 상태 및 오류 로그 수집 결과.png](./picture/Private%20Instance%20상태%20및%20오류%20로그%20수집%20결과.png)
 
 ---
 
