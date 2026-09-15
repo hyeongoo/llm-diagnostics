@@ -60,7 +60,7 @@
 
 ---
 
-| &nbsp;&nbsp;구분 &nbsp;&nbsp; | 내용 |
+| &nbsp;&nbsp;구분&nbsp;&nbsp; | 내용 |
 | --- | --- |
 | **문제** | LLM이 근거 문장을 직접 생성하면서 관측 사실과 추론이 섞이고, Host·Service 정보를 혼동. 이를 보완하는 Python의 의미 검증이 늘어나면서 코드 복잡도 증가 및 답변의 과도한 제한 발생. |
 | **판단** | 의미 검증 규칙을 추가하는 방식은 코드 복잡도를 높이고 답변을 과도하게 제한. 규칙을 계속 늘리는 대신, 근거를 실제 Observation으로 고정하고 LLM의 해석을 분리하는 방식으로 전환. 의미 해석의 정확성을 보장하기보다 근거 출처와 오류 발생 단계를 확인할 수 있도록 설계. |
@@ -74,7 +74,7 @@
 
 ---
 
-|&nbsp;&nbsp;구분 &nbsp;&nbsp;| 내용 |
+| &nbsp;&nbsp;구분&nbsp;&nbsp; | 내용 |
 | --- | --- |
 | **문제** | 당시 네트워크 구성에서 OpenStack Controller의 Private Instance에 직접 SSH 접속 실패로 내부 상태·로그 수집 불가. |
 | **판단** | Bastion을 경유하는 SSH 접속 경로를 구성하고, 접속 설정은 SSH Config에 모아 수집 스크립트에서도 재사용하도록 구성. |
@@ -88,7 +88,7 @@
 
 ---
 
-| &nbsp;&nbsp;구분 &nbsp;&nbsp; | 내용 |
+| &nbsp;&nbsp;구분&nbsp;&nbsp; | 내용 |
 | --- | --- |
 | **문제** | Controller VM의 메모리 16GB 중 약 14GB 사용으로 LLM 동시 실행에 부담. Windows Host로 추론을 분리했으나 Controller VM의 API 요청에서 Timeout 발생. |
 | **판단** | Windows Host에서 LLM을 실행해 Controller의 수집·분석 요청과 역할 분리. 연결 오류는 로컬 API, 바인딩, 외부 접근을 순서대로 확인해 원인 범위를 좁힘. |
