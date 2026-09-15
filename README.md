@@ -50,16 +50,7 @@
 
 ![Private Instance 상태 및 오류 로그 수집 결과.png](./picture/Private%20Instance%20상태%20및%20오류%20로그%20수집%20결과.png)
 
----
 
-**진단 흐름 및 특징**
-
-- Desired State와 실제 상태를 비교해 `NORMAL / ANOMALY` 판정
-- 이상 탐지 시 상세 상태·Journal을 Observation으로 구조화
-- 상태 판정은 Python, 장애 의미 해석은 LLM으로 역할 분리
-- Observation 참조 검증 후 Report/Trace로 저장해 진단 과정 추적
-
-![ai 분석 결과.png](./picture/ai%20분석%20결과.png)
 
 ---
 
