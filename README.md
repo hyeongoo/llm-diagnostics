@@ -64,10 +64,7 @@
 | --- | --- |
 | **문제** | LLM이 근거 문장을 직접 생성하면서 관측 사실과 추론이 섞이고, Host·Service 정보를 혼동. 이를 보완하는 Python의 의미 검증이 늘어나면서 코드 복잡도 증가 및 답변의 과도한 제한 발생. |
 | **판단** | 의미 검증 규칙을 추가하는 방식은 코드 복잡도를 높이고 답변을 과도하게 제한. 규칙을 계속 늘리는 대신, 근거를 실제 Observation으로 고정하고 LLM의 해석을 분리하는 방식으로 전환. 의미 해석의 정확성을 보장하기보다 근거 출처와 오류 발생 단계를 확인할 수 있도록 설계. |
-| **적용** | ① 수집 데이터를 Observation으로 구조화하고 ID 부여
-② Host·Service별 분석 대상 분리 및 JSON Schema 기반 출력 적용
-③ Python에서 출력 구조와 실제 Observation 참조 검증
-④ Report에 진단 결과, Trace에 Observation·LLM 원본·검증 결과 저장 |
+| **적용** | ① 수집 데이터를 Observation으로 구조화하고 ID 부여<br>② Host·Service별 분석 대상 분리 및 JSON Schema 기반 출력 적용<br>③ Python에서 출력 구조와 실제 Observation 참조 검증<br>④ Report에 진단 결과, Trace에 Observation·LLM 원본·검증 결과 저장 |
 | **결과·한계** | 근거 출처 확인과 LLM 원본 응답·Python 검증 결과의 비교가 가능한 구조 마련. 의미 해석 오류는 남아 있어 대응 제안은 운영자 검토를 전제로 구성. |
 
 ![문제1.png](./picture/문제1.png)
@@ -81,9 +78,7 @@
 | --- | --- |
 | **문제** | 당시 네트워크 구성에서 OpenStack Controller의 Private Instance에 직접 SSH 접속 실패로 내부 상태·로그 수집 불가. |
 | **판단** | Bastion을 경유하는 SSH 접속 경로를 구성하고, 접속 설정은 SSH Config에 모아 수집 스크립트에서도 재사용하도록 구성. |
-| **적용** | ① ProxyJump를 통한 Bastion 경유 접속 구성
-② SSH Config에 Bastion·Private Instance별 SSH 키 경로와 접속 별칭 등록
-③ 수집 스크립트에 동일한 접속 별칭 적용 |
+| **적용** | ① ProxyJump를 통한 Bastion 경유 접속 구성<br>② SSH Config에 Bastion·Private Instance별 SSH 키 경로와 접속 별칭 등록<br>③ 수집 스크립트에 동일한 접속 별칭 적용 |
 | **결과** | 접속 별칭을 통한 Private Instance 접근 및 상태·로그 수집 확인. SSH Config의 접속 설정을 수집 스크립트에서 일관되게 재사용. |
 
 ![문제2.png](./picture/문제2.png)
@@ -97,11 +92,8 @@
 | --- | --- |
 | **문제** | Controller VM의 메모리 16GB 중 약 14GB 사용으로 LLM 동시 실행에 부담. Windows Host로 추론을 분리했으나 Controller VM의 API 요청에서 Timeout 발생. |
 | **판단** | Windows Host에서 LLM을 실행해 Controller의 수집·분석 요청과 역할 분리. 연결 오류는 로컬 API, 바인딩, 외부 접근을 순서대로 확인해 원인 범위를 좁힘. |
-| **확인·적용** | ① Windows의 localhost API에서 모델 조회 성공 확인
-② Host-Only IP로 바인딩 후 Listen 상태와 Windows 내 해당 IP 호출 성공 확인 
-      → Controller에서만 Timeout 지속
-③ Controller IP의 TCP 11434 허용 규칙 추가 후에도 실패해 애플리케이션별 규칙 점검
-④ 활성화된 `ollama.exe` Inbound Block 발견 및 비활성화 |
+| **확인·적용** | ① Windows의 localhost API에서 모델 조회 성공 확인<br>② Host-Only IP로 바인딩 후 Listen 상태와 Windows 내 해당 IP 호출 성공 확인 
+      → Controller에서만 Timeout 지속<br>③ Controller IP의 TCP 11434 허용 규칙 추가 후에도 실패해 애플리케이션별 규칙 점검<br>④ 활성화된 `ollama.exe` Inbound Block 발견 및 비활성화 |
 | **결과** | 차단 규칙 비활성화 전후 Controller VM에서 동일한 `curl` 요청을 비교해 Timeout → 정상 JSON 응답 전환 확인. Qwen3 1.7B API 호출 성공 및 Controller IP로 접근 허용 범위 제한. |
 
 ![문제3.png](./picture/문제3.png)
