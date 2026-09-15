@@ -2,7 +2,7 @@
 
 - **배경**
     
-    클라우드 장애 진단 시 서버, 네트워크, 로드밸런서 상태와 VM 내부 로그를 각각 확인해야 하며, 여러 위치에 분산된 정보를 운영자가 직접 종합해야 하는 반복 작업이 발생. 이를 줄이기 위해 OpenStack 리소스 상태와 Private Instance의 Linux 운영 데이터를 자동 수집하고, Desired State 기반 이상 탐지와 로컬 LLM 분석을 결합한 운영 진단 자동화 환경을 구축.
+    클라우드 장애 진단 시 서버, 네트워크, 로드밸런서 상태와 Private Instance 내부 로그를 각각 확인해야 하며, 여러 위치에 분산된 정보를 운영자가 직접 종합해야 하는 반복 작업이 발생. 이를 줄이기 위해 OpenStack 리소스 상태와 Private Instance의 Linux 운영 데이터를 자동 수집하고, Desired State 기반 이상 탐지와 로컬 LLM 분석을 결합한 운영 진단 자동화 환경을 구축.
     
 - **목표**
     1. OpenStack 리소스와 Private Instance의 상태·로그 자동 수집
