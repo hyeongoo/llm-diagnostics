@@ -116,16 +116,6 @@ Timeout 테스트 서비스의 상태 수집 결과
 
 LLM 진단 출력 — Timeout 근거는 제시했으나, 실행 명령의 30초를 제한시간으로 오해
 
----
-
-## 기술 선택과 적용 범위
-
-| 기술 | 선택 이유와 적용 범위 |
-| --- | --- |
-| OpenStack | 기존에 구축한 환경을 활용해 리소스 상태 수집과 Private Instance 진단 실습 수행 |
-| Shell Script | OpenStack CLI·SSH·Linux 명령을 연결해 수집 절차 자동화 |
-| Python | 상태 비교, Observation 구조화, LLM 호출·검증, 결과 저장 담당 |
-| Ollama + Qwen3 1.7B | 로컬 CPU 환경에서 실행하며 한국어 진단과 구조화 출력의 적용 가능성을 확인하기 위한 초기 모델 |
 
 ---
 
